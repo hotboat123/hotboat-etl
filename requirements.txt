@@ -1,4 +1,4 @@
-APScheduler==3.10.4
+apscheduler
 psycopg[binary]==3.2.2
 psycopg_pool==3.2.2
 gspread==6.1.2

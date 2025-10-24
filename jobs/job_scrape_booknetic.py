@@ -8,19 +8,36 @@ import requests
 from db.utils import upsert_many
 
 
+def _try_plugin(module_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    try:
+        mod = importlib.import_module(module_path)
+        data = mod.fetch()
+        print(f"[booknetic] plugin used: {module_path}")
+        if isinstance(data, dict):
+            return data.get("appointments", []), data.get("customers", [])
+        if isinstance(data, list):
+            return data, []
+    except Exception as e:  # noqa: BLE001
+        print(f"[booknetic] plugin '{module_path}' failed: {e}")
+    return [], []
+
+
 def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    # 1) Prefer explicit plugin via env
     plugin_module = os.getenv("BOOKNETIC_PLUGIN_MODULE")
     if plugin_module:
-        try:
-            mod = importlib.import_module(plugin_module)
-            data = mod.fetch()
-            # Permitimos devolver dict con claves 'appointments' y/o 'customers'
-            if isinstance(data, dict):
-                return data.get("appointments", []), data.get("customers", [])
-            if isinstance(data, list):
-                return data, []
-        except Exception as e:  # noqa: BLE001
-            print(f"[booknetic] plugin load failed: {e}")
+        appts, custs = _try_plugin(plugin_module)
+        if appts or custs:
+            return appts, custs
+
+    # 2) Autodetect common plugins if env not set
+    for candidate in [
+        "plugins.booknetic_export_adapter",
+        "plugins.booknetic_adapter_example",
+    ]:
+        appts, custs = _try_plugin(candidate)
+        if appts or custs:
+            return appts, custs
 
     base_url = os.getenv("BOOKNETIC_BASE_URL")
     token = os.getenv("BOOKNETIC_TOKEN")

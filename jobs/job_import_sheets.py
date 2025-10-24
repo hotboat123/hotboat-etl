@@ -105,7 +105,7 @@ def run() -> int:
             except Exception:  # noqa: BLE001
                 col_map = None
 
-    mapped_with_aliases = [_apply_col_map(m, col_map) for m in mapped]
+        mapped_with_aliases = [_apply_col_map(m, col_map) for m in mapped]
     else:
         data_rows = rows
         print(f"[sheets] no header mode. fetched_rows={len(data_rows)}")

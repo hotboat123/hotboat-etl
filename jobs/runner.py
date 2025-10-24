@@ -1,5 +1,6 @@
 import os
 import time
+import datetime as dt
 from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
 
@@ -16,12 +17,41 @@ def main() -> None:
     print_db_identity()
     ensure_schema()
 
-    scheduler = BlockingScheduler(timezone=os.getenv("TZ", "UTC"))
+    scheduler = BlockingScheduler(
+        timezone=os.getenv("TZ", "UTC"),
+        job_defaults={
+            "coalesce": True,
+            "max_instances": 1,
+            "misfire_grace_time": 600,
+        },
+    )
 
-    scheduler.add_job(lambda: run_with_job_meta("sheets_import", run_sheets), trigger="cron", minute="*")
-    scheduler.add_job(lambda: run_with_job_meta("booknetic_scrape", run_booknetic), trigger="cron", minute="*/")
+    # One-time boot run for Booknetic
+    scheduler.add_job(
+        lambda: run_with_job_meta("booknetic_scrape", run_booknetic),
+        trigger="date",
+        run_date=dt.datetime.now(dt.timezone.utc),
+        id="booknetic_boot",
+        replace_existing=True,
+    )
 
-    print("[runner] Scheduler started. Cron: sheets @ *; booknetic @ */15")
+    # Crons
+    scheduler.add_job(
+        lambda: run_with_job_meta("sheets_import", run_sheets),
+        trigger="cron",
+        minute="*",
+        id="sheets_cron",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        lambda: run_with_job_meta("booknetic_scrape", run_booknetic),
+        trigger="cron",
+        minute="*/15",
+        id="booknetic_cron",
+        replace_existing=True,
+    )
+
+    print("[runner] Scheduler started. Cron: sheets @ *; booknetic @ */15 (boot run enabled)")
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

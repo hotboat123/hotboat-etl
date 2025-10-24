@@ -8,40 +8,49 @@ import requests
 from db.utils import upsert_many
 
 
-def _try_plugin(module_path: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _try_plugin(module_path: str):
+    """
+    Try to load plugin and return data
+    Returns: dict, tuple, or list depending on plugin
+    """
     try:
         mod = importlib.import_module(module_path)
         data = mod.fetch()
         print(f"[booknetic] plugin used: {module_path}")
-        if isinstance(data, dict):
-            return data.get("appointments", []), data.get("customers", [])
-        if isinstance(data, list):
-            return data, []
+        return data
     except Exception as e:  # noqa: BLE001
         print(f"[booknetic] plugin '{module_path}' failed: {e}")
-    return [], []
+        import traceback
+        traceback.print_exc()
+    return None
 
 
-def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _fetch_booknetic():
+    """
+    Fetch Booknetic data using plugins
+    Returns: dict, tuple, or list depending on plugin
+    """
     # 1) Prefer explicit plugin via env
     plugin_module = os.getenv("BOOKNETIC_PLUGIN_MODULE")
     if plugin_module:
-        appts, custs = _try_plugin(plugin_module)
-        if appts or custs:
-            return appts, custs
+        data = _try_plugin(plugin_module)
+        if data:
+            return data
         # Si el usuario especificó un plugin explícito pero no hubo datos,
         # no forzamos la ruta API; devolvemos vacío para no romper por envs faltantes
         print(f"[booknetic] plugin '{plugin_module}' returned no data; skipping API fallback")
-        return [], []
+        return {"appointments": [], "customers": [], "payments": []}
 
     # 2) Autodetect common plugins if env not set
     for candidate in [
+        "plugins.booknetic_full_export",  # NEW: Full export with customers, appointments, payments
         "plugins.booknetic_export_adapter",
+        "plugins.booknetic_selenium_export",
         "plugins.booknetic_adapter_example",
     ]:
-        appts, custs = _try_plugin(candidate)
-        if appts or custs:
-            return appts, custs
+        data = _try_plugin(candidate)
+        if data:
+            return data
 
     # 3) Fallback API: acepta alias de variables
     base_url = os.getenv("BOOKNETIC_BASE_URL") or os.getenv("BOOKNETIC_URL")
@@ -75,59 +84,82 @@ def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
 
 def run() -> int:
-    appts, customers = _fetch_booknetic()
-    payments: List[Dict[str, Any]] = []
+    data = _fetch_booknetic()
+    
+    # Handle different return formats
+    if isinstance(data, tuple):
+        # Old format: (appointments, customers)
+        appts, customers = data
+        payments = []
+    elif isinstance(data, dict):
+        # New format: {"appointments": [], "customers": [], "payments": []}
+        appts = data.get("appointments", [])
+        customers = data.get("customers", [])
+        payments = data.get("payments", [])
+    else:
+        # List of appointments only
+        appts = data if isinstance(data, list) else []
+        customers = []
+        payments = []
 
-    # Some plugins may return dicts with 'payments' field via _try_plugin
-    if isinstance(appts, dict):
-        payments = appts.get("payments", [])
-        appts = appts.get("appointments", [])
+    affected = 0
 
-    # Asegura id estable si falta utilizando hash
-    for it in appts:
-        if not it.get("id"):
-            raw = f"{it.get('customer_email','')}|{it.get('starts_at','')}|{it.get('service_name','')}"
-            it["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-    affected = upsert_many(
-        table="booknetic_appointments",
-        rows=appts,
-        conflict_columns=["id"],
-        update_columns=[
-            "customer_name",
-            "customer_email",
-            "service_name",
-            "starts_at",
-            "status",
-            "raw",
-        ],
-    )
+    # Upsert appointments
+    if appts:
+        # Asegura id estable si falta utilizando hash
+        for it in appts:
+            if not it.get("id"):
+                raw = f"{it.get('customer_email','')}|{it.get('starts_at','')}|{it.get('service_name','')}"
+                it["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        affected += upsert_many(
+            table="booknetic_appointments",
+            rows=appts,
+            conflict_columns=["id"],
+            update_columns=[
+                "customer_name",
+                "customer_email",
+                "service_name",
+                "starts_at",
+                "status",
+                "raw",
+            ],
+        )
+        print(f"[booknetic] {affected} appointments upserted")
 
     # Upsert customers if provided
     if customers:
         for c in customers:
             if not c.get("id"):
                 raw = f"{c.get('email','')}|{c.get('name','')}|{c.get('phone','')}"
-                c["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-        affected += upsert_many(
+                c["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        customer_affected = upsert_many(
             table="booknetic_customers",
             rows=customers,
             conflict_columns=["id"],
             update_columns=["name", "email", "phone", "status", "raw"],
         )
+        affected += customer_affected
+        print(f"[booknetic] {customer_affected} customers upserted")
 
     # Upsert payments if any
     if payments:
         for p in payments:
             if not p.get("id"):
                 raw = f"{p.get('appointment_id','')}|{p.get('amount','')}|{p.get('paid_at','')}"
-                p["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-        affected += upsert_many(
+                p["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        payment_affected = upsert_many(
             table="booknetic_payments",
             rows=payments,
             conflict_columns=["id"],
             update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"],
         )
+        affected += payment_affected
+        print(f"[booknetic] {payment_affected} payments upserted")
 
+    print(f"[booknetic] Total affected: {affected}")
     return affected
 
 

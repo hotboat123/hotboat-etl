@@ -1,21 +1,20 @@
 import os
 import time
-import pandas as pd
+import csv
+import hashlib
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any, Optional
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import chromedriver_autoinstaller
-from datetime import datetime
-import json
 
 def setup_chrome_driver():
     """Setup Chrome driver with automatic chromedriver installation"""
     try:
-        # Auto-install chromedriver
-        chromedriver_autoinstaller.install()
-        
         # Chrome options
         chrome_options = Options()
         chrome_options.add_argument("--no-sandbox")
@@ -28,22 +27,33 @@ def setup_chrome_driver():
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
         # Configurar directorio de descargas
+        downloads_dir = os.path.join(os.getcwd(), "downloads")
+        os.makedirs(downloads_dir, exist_ok=True)
+        
         chrome_options.add_experimental_option("prefs", {
-            "download.default_directory": os.path.join(os.getcwd(), "downloads"),
+            "download.default_directory": downloads_dir,
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
         })
         
-        # Initialize driver
+        print("⚙️ Inicializando Chrome driver...")
+        print("ℹ️ Usando Selenium Manager para gestión automática de drivers")
+        
+        # Initialize driver - Selenium 4+ maneja automáticamente el chromedriver
+        # No necesitamos chromedriver-autoinstaller
         driver = webdriver.Chrome(options=chrome_options)
         
         # Scripts para ocultar automatización
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         driver.execute_script("window.navigator.chrome = {runtime: {}};")
         
+        print("✅ Chrome driver inicializado correctamente")
         return driver
     except Exception as e:
-        print(f"Error setting up Chrome driver: {e}")
+        print(f"❌ Error setting up Chrome driver: {e}")
+        print("\nℹ️ Soluciones posibles:")
+        print("1. Actualiza Chrome a la última versión: https://www.google.com/chrome/")
+        print("2. O ejecuta: pip install --upgrade selenium")
         return None
 
 def login_wordpress(driver, username, password):
@@ -109,12 +119,29 @@ def login_wordpress(driver, username, password):
         
         # Verificar resultado
         current_url = driver.current_url
+        print(f"🔍 URL actual después de login: {current_url}")
+        
         if 'wp-admin' in current_url:
             print("🎉 ¡LOGIN EXITOSO!")
             print(f"✅ Redirigido a: {current_url}")
             return True
         else:
-            print("❌ Login falló")
+            print("❌ Login falló o requiere verificación adicional")
+            print("📸 Tomando captura de pantalla para debug...")
+            try:
+                screenshot_path = os.path.join(os.getcwd(), "downloads", "login_failed.png")
+                driver.save_screenshot(screenshot_path)
+                print(f"📸 Captura guardada en: {screenshot_path}")
+            except:
+                pass
+            
+            # Buscar mensajes de error en la página
+            try:
+                error_msg = driver.find_element(By.ID, "login_error")
+                print(f"⚠️ Mensaje de error: {error_msg.text}")
+            except:
+                pass
+                
             return False
             
     except Exception as e:
@@ -143,30 +170,27 @@ def navigate_to_booknetic(driver):
         print(f"Error navegando a Booknetic: {e}")
         return False
 
-def export_customers_data(driver):
-    """Export customers data from Booknetic"""
+def export_data_generic(driver, module_name, module_display_name):
+    """Generic function to export data from any Booknetic module"""
     try:
-        print("📊 Navegando a la sección de customers...")
+        print(f"📊 Navegando a la sección de {module_display_name}...")
         
-        # Navigate to customers
-        customers_url = "https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module=customers"
-        driver.get(customers_url)
+        # Navigate to the module
+        module_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}"
+        driver.get(module_url)
         time.sleep(5)
         
         print(f"🔄 URL actual: {driver.current_url}")
-        print(f"📄 Título: {driver.title}")
         
         # Wait for the page to load
         wait = WebDriverWait(driver, 15)
         
         # Buscar botón de export CSV
-        print("🔍 Buscando botón de export...")
+        print(f"🔍 Buscando botón de export para {module_display_name}...")
         
         # Intentar diferentes selectores para el botón export
         possible_selectors = [
             "button[data-action='export']",
-            "button:contains('Export')",
-            "a:contains('Export')",
             ".btn-export",
             "[data-toggle='export']",
             "button.export-csv",
@@ -179,13 +203,7 @@ def export_customers_data(driver):
         export_button = None
         for selector in possible_selectors:
             try:
-                if ':contains' in selector:
-                    # Para selectores con :contains, usar XPath
-                    xpath_selector = f"//*[contains(text(), 'Export') or contains(text(), 'export') or contains(text(), 'CSV')]"
-                    export_button = driver.find_element(By.XPATH, xpath_selector)
-                else:
-                    export_button = driver.find_element(By.CSS_SELECTOR, selector)
-                
+                export_button = driver.find_element(By.CSS_SELECTOR, selector)
                 if export_button and export_button.is_displayed():
                     print(f"✅ Botón export encontrado con selector: {selector}")
                     break
@@ -193,54 +211,274 @@ def export_customers_data(driver):
                 continue
         
         if not export_button:
-            # Buscar todos los botones y links visibles
-            print("🔍 Buscando todos los botones y enlaces visibles...")
-            all_buttons = driver.find_elements(By.TAG_NAME, "button")
-            all_links = driver.find_elements(By.TAG_NAME, "a")
-            
-            for element in all_buttons + all_links:
-                try:
-                    text = element.text.lower()
-                    if 'export' in text or 'csv' in text or 'descargar' in text:
+            # Buscar todos los botones y links visibles con texto relacionado a export
+            print("🔍 Buscando elementos con texto 'export'...")
+            xpath_selector = "//*[contains(translate(text(), 'EXPORT', 'export'), 'export') or contains(translate(text(), 'CSV', 'csv'), 'csv') or contains(translate(text(), 'DOWNLOAD', 'download'), 'download')]"
+            try:
+                elements = driver.find_elements(By.XPATH, xpath_selector)
+                for element in elements:
+                    if element.is_displayed() and element.is_enabled():
                         print(f"✅ Encontrado elemento con texto: {element.text}")
                         export_button = element
                         break
-                except:
-                    continue
+            except:
+                pass
         
         if export_button:
-            print("🖱️ Haciendo click en botón export...")
+            print(f"🖱️ Haciendo click en botón export para {module_display_name}...")
             driver.execute_script("arguments[0].click();", export_button)
             print("✅ Click realizado")
             
             # Wait for download to start
             time.sleep(5)
-            print("📥 Descarga iniciada")
+            print(f"📥 Descarga de {module_display_name} iniciada")
             return True
         else:
-            print("❌ No se encontró botón de export")
+            print(f"❌ No se encontró botón de export para {module_display_name}")
             print("🔍 Intentando URL directa de export...")
             
             # Try direct export URL
-            export_url = "https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module=customers&action=export"
+            export_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}&action=export"
             driver.get(export_url)
             time.sleep(5)
             
-            print("✅ URL directa de export accedida")
+            print(f"✅ URL directa de export para {module_display_name} accedida")
             return True
         
     except Exception as e:
-        print(f"Error during export: {e}")
+        print(f"Error during export of {module_display_name}: {e}")
         return False
+
+def export_customers_data(driver):
+    """Export customers data from Booknetic"""
+    return export_data_generic(driver, "customers", "Customers")
+
+def export_appointments_data(driver):
+    """Export appointments data from Booknetic"""
+    return export_data_generic(driver, "appointments", "Appointments")
+
+def export_payments_data(driver):
+    """Export payments data from Booknetic"""
+    return export_data_generic(driver, "payments", "Payments")
+
+def find_latest_csv(downloads_dir: Path, pattern: str) -> Optional[Path]:
+    """Find the most recent CSV file matching the pattern"""
+    csvs = sorted(
+        downloads_dir.glob(pattern),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+    return csvs[0] if csvs else None
+
+def normalize_key(key: str) -> str:
+    """Normalize CSV column names"""
+    return (key or "").strip().lower().replace(" ", "_")
+
+def parse_csv_file(file_path: Path) -> List[Dict[str, Any]]:
+    """Parse CSV file and return list of dicts"""
+    items = []
+    try:
+        with file_path.open("r", newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                items.append(dict(row))
+        print(f"✅ Parsed {len(items)} rows from {file_path.name}")
+    except Exception as e:
+        print(f"❌ Error parsing {file_path.name}: {e}")
+    return items
+
+def map_customers_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map customer CSV rows to database format"""
+    mapped = []
+    for row in rows:
+        # Normalize keys
+        norm_row = {normalize_key(k): v for k, v in row.items()}
+        
+        # Extract fields with flexible key matching
+        email = norm_row.get("email", "")
+        first_name = norm_row.get("first_name", "")
+        last_name = norm_row.get("last_name", "")
+        name = f"{first_name} {last_name}".strip() if first_name or last_name else ""
+        phone = norm_row.get("phone", "")
+        
+        # Generate ID
+        customer_id = norm_row.get("id") or norm_row.get("customer_id")
+        if not customer_id:
+            raw = f"{email}|{name}|{phone}"
+            customer_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        mapped.append({
+            "id": str(customer_id),
+            "name": name or None,
+            "email": email or None,
+            "phone": phone or None,
+            "status": norm_row.get("status", "active"),
+            "raw": norm_row
+        })
+    
+    return mapped
+
+def map_appointments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map appointment CSV rows to database format"""
+    mapped = []
+    for row in rows:
+        # Normalize keys
+        norm_row = {normalize_key(k): v for k, v in row.items()}
+        
+        # Extract fields
+        customer_name = norm_row.get("customer", "") or norm_row.get("customer_name", "")
+        customer_email = norm_row.get("customer_email", "") or norm_row.get("email", "")
+        service = norm_row.get("service", "") or norm_row.get("service_name", "")
+        date = norm_row.get("date", "") or norm_row.get("start_date", "") or norm_row.get("starts_at", "")
+        status = norm_row.get("status", "")
+        
+        # Generate ID
+        appt_id = norm_row.get("id") or norm_row.get("appointment_id")
+        if not appt_id:
+            raw = f"{customer_email}|{date}|{service}"
+            appt_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        mapped.append({
+            "id": str(appt_id),
+            "customer_name": customer_name or None,
+            "customer_email": customer_email or None,
+            "service_name": service or None,
+            "starts_at": date or None,
+            "status": status or None,
+            "raw": norm_row
+        })
+    
+    return mapped
+
+def map_payments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Map payment CSV rows to database format"""
+    mapped = []
+    for row in rows:
+        # Normalize keys
+        norm_row = {normalize_key(k): v for k, v in row.items()}
+        
+        # Extract fields
+        appointment_id = norm_row.get("appointment_id", "") or norm_row.get("appointment", "")
+        amount = norm_row.get("amount", "") or norm_row.get("price", "") or norm_row.get("total", "")
+        currency = norm_row.get("currency", "CLP")
+        status = norm_row.get("status", "") or norm_row.get("payment_status", "")
+        method = norm_row.get("method", "") or norm_row.get("payment_method", "")
+        paid_at = norm_row.get("paid_at", "") or norm_row.get("date", "") or norm_row.get("payment_date", "")
+        
+        # Generate ID
+        payment_id = norm_row.get("id") or norm_row.get("payment_id")
+        if not payment_id:
+            raw = f"{appointment_id}|{amount}|{paid_at}"
+            payment_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        
+        mapped.append({
+            "id": str(payment_id),
+            "appointment_id": str(appointment_id) if appointment_id else None,
+            "amount": amount or None,
+            "currency": currency or "CLP",
+            "status": status or None,
+            "method": method or None,
+            "paid_at": paid_at or None,
+            "raw": norm_row
+        })
+    
+    return mapped
+
+def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, int]:
+    """Load CSV files to database"""
+    results = {
+        "customers": 0,
+        "appointments": 0,
+        "payments": 0
+    }
+    
+    if not use_db:
+        print("⚠️ Database disabled, skipping upload")
+        return results
+    
+    try:
+        # Import DB functions only if needed
+        from db.utils import upsert_many
+        
+        print()
+        print("=" * 60)
+        print("📤 Cargando datos a PostgreSQL...")
+        print("=" * 60)
+        print()
+        
+        # 1. Load Customers
+        customers_file = find_latest_csv(downloads_dir, "customers_*.csv")
+        if customers_file:
+            print(f"📁 Procesando {customers_file.name}...")
+            rows = parse_csv_file(customers_file)
+            if rows:
+                mapped = map_customers_to_db(rows)
+                affected = upsert_many(
+                    table="booknetic_customers",
+                    rows=mapped,
+                    conflict_columns=["id"],
+                    update_columns=["name", "email", "phone", "status", "raw"]
+                )
+                results["customers"] = affected
+                print(f"✅ {affected} customers insertados/actualizados\n")
+        
+        # 2. Load Appointments
+        appointments_file = find_latest_csv(downloads_dir, "appointments_*.csv")
+        if appointments_file:
+            print(f"📁 Procesando {appointments_file.name}...")
+            rows = parse_csv_file(appointments_file)
+            if rows:
+                mapped = map_appointments_to_db(rows)
+                affected = upsert_many(
+                    table="booknetic_appointments",
+                    rows=mapped,
+                    conflict_columns=["id"],
+                    update_columns=["customer_name", "customer_email", "service_name", "starts_at", "status", "raw"]
+                )
+                results["appointments"] = affected
+                print(f"✅ {affected} appointments insertados/actualizados\n")
+        
+        # 3. Load Payments
+        payments_file = find_latest_csv(downloads_dir, "payments_*.csv")
+        if payments_file:
+            print(f"📁 Procesando {payments_file.name}...")
+            rows = parse_csv_file(payments_file)
+            if rows:
+                mapped = map_payments_to_db(rows)
+                affected = upsert_many(
+                    table="booknetic_payments",
+                    rows=mapped,
+                    conflict_columns=["id"],
+                    update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"]
+                )
+                results["payments"] = affected
+                print(f"✅ {affected} payments insertados/actualizados\n")
+        
+        print("=" * 60)
+        print("✅ Carga a base de datos completada")
+        print("=" * 60)
+        
+    except ImportError:
+        print("⚠️ No se pudo importar módulos de DB. Asegúrate de tener DATABASE_URL configurado.")
+    except Exception as e:
+        print(f"❌ Error cargando a base de datos: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return results
 
 def main():
     """Main function to export Booknetic data"""
     print("=== Booknetic Data Export Tool ===")
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Credentials
-    username = "admin@hotboat.cl"
-    password = "H0TBOAT123"
+    # DEBUG: Ver qué hay en las variables de entorno
+    print(f"DEBUG - Env BOOKNETIC_USERNAME: {os.environ.get('BOOKNETIC_USERNAME', 'NOT SET')}")
+    print(f"DEBUG - Env BOOKNETIC_PASSWORD: {'***' if os.environ.get('BOOKNETIC_PASSWORD') else 'NOT SET'}")
+    
+    # Credentials - leer de variables de entorno o usar defaults
+    username = os.getenv("BOOKNETIC_USERNAME", "hotboatvillarrica@gmail.com")
+    password = os.getenv("BOOKNETIC_PASSWORD", "Hotboat777")
     
     print(f"Using username: {username}")
     
@@ -261,15 +499,98 @@ def main():
             print("Failed to navigate to Booknetic. Exiting...")
             return
         
-        # Export data
+        print()
+        print("=" * 60)
+        print("Iniciando exportación de datos...")
+        print("=" * 60)
+        print()
+        
+        # Export all data types
+        exports_completed = 0
+        exports_failed = 0
+        
+        # 1. Export Customers
+        print("🔷 [1/3] Exportando Customers...")
         if export_customers_data(driver):
-            print("Export process completed successfully!")
-            print("Please check your downloads folder for the exported file.")
+            print("✅ Customers exportado exitosamente")
+            exports_completed += 1
         else:
-            print("Export process failed")
+            print("❌ Falló la exportación de Customers")
+            exports_failed += 1
+        print()
+        
+        # 2. Export Appointments
+        print("🔷 [2/3] Exportando Appointments...")
+        if export_appointments_data(driver):
+            print("✅ Appointments exportado exitosamente")
+            exports_completed += 1
+        else:
+            print("❌ Falló la exportación de Appointments")
+            exports_failed += 1
+        print()
+        
+        # 3. Export Payments
+        print("🔷 [3/3] Exportando Payments...")
+        if export_payments_data(driver):
+            print("✅ Payments exportado exitosamente")
+            exports_completed += 1
+        else:
+            print("❌ Falló la exportación de Payments")
+            exports_failed += 1
+        print()
+        
+        # Summary de exportación CSV
+        print("=" * 60)
+        print("📊 RESUMEN DE EXPORTACIÓN CSV")
+        print("=" * 60)
+        print(f"✅ Exportaciones exitosas: {exports_completed}/3")
+        print(f"❌ Exportaciones fallidas: {exports_failed}/3")
+        downloads_path = os.path.join(os.getcwd(), 'downloads')
+        print(f"📁 Archivos guardados en: {downloads_path}")
+        print("=" * 60)
+        
+        # Load to database if enabled
+        use_database = os.getenv("USE_DATABASE", "true").lower() in ("true", "1", "yes", "y")
+        db_results = {"customers": 0, "appointments": 0, "payments": 0}
+        
+        if exports_completed > 0 and use_database:
+            print("\n⏳ Esperando 3 segundos para asegurar que las descargas terminen...")
+            time.sleep(3)
+            
+            try:
+                db_results = load_csv_to_database(Path(downloads_path), use_db=True)
+                
+                # Final summary
+                print()
+                print("=" * 60)
+                print("📊 RESUMEN FINAL")
+                print("=" * 60)
+                print(f"📥 CSV Exportados: {exports_completed}/3")
+                print(f"💾 Customers en DB: {db_results['customers']}")
+                print(f"💾 Appointments en DB: {db_results['appointments']}")
+                print(f"💾 Payments en DB: {db_results['payments']}")
+                total_db = sum(db_results.values())
+                print(f"💾 Total registros en DB: {total_db}")
+                print("=" * 60)
+                
+                if total_db > 0:
+                    print("\n🎉 ¡Proceso completado exitosamente!")
+                else:
+                    print("\n⚠️ Los CSV se exportaron pero no se cargaron datos a la DB")
+                    
+            except Exception as e:
+                print(f"\n⚠️ Error al cargar a base de datos: {e}")
+                print("✅ Los CSV se exportaron correctamente en la carpeta downloads/")
+        elif exports_completed > 0:
+            print("\n🎉 CSV exportados correctamente!")
+            print("ℹ️ Carga a base de datos deshabilitada (USE_DATABASE=false)")
+        else:
+            print("\n⚠️ No se pudo exportar ningún archivo")
             
     except Exception as e:
         print(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
     
     finally:
         # Keep browser open for manual inspection

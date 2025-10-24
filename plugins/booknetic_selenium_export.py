@@ -11,6 +11,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+import shutil
+import glob
 
 
 def _best_map(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -55,17 +58,37 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
     if not base_url or not username or not password:
         raise RuntimeError("BOOKNETIC_URL/USERNAME/PASSWORD not set for selenium export")
 
-    chromedriver_autoinstaller.install()
+    driver_path = chromedriver_autoinstaller.install()
     opts = Options()
     opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-gpu")
     prefs = {
         "download.prompt_for_download": False,
         "download.directory_upgrade": True,
     }
     opts.add_experimental_option("prefs", prefs)
-    driver = webdriver.Chrome(options=opts)
+
+    # Locate Chromium/Chrome binary in Nix or environment
+    chrome_bin = (
+        os.getenv("CHROME_BIN")
+        or shutil.which("chromium")
+        or shutil.which("chromium-browser")
+        or shutil.which("google-chrome")
+    )
+    if not chrome_bin:
+        matches = glob.glob("/nix/store/*chromium*/bin/chromium")
+        if matches:
+            chrome_bin = matches[0]
+    if chrome_bin:
+        opts.binary_location = chrome_bin
+
+    if not chrome_bin:
+        raise RuntimeError("Chromium/Chrome binary not found; set CHROME_BIN or ensure chromium is installed")
+
+    service = Service(driver_path if driver_path else shutil.which("chromedriver"))
+    driver = webdriver.Chrome(service=service, options=opts)
     wait = WebDriverWait(driver, 20)
 
     try:

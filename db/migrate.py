@@ -42,6 +42,11 @@ def ensure_schema() -> None:
             updated_at timestamptz not null default now()
         );
         """,
+        # Ensure new columns exist on already-created tables
+        """
+        alter table if exists leads
+        add column if not exists raw jsonb;
+        """,
         """
         drop trigger if exists trg_leads_updated_at on leads;
         """,
@@ -70,6 +75,27 @@ def ensure_schema() -> None:
         """
         create trigger trg_booknetic_updated_at
         before update on booknetic_appointments
+        for each row execute procedure set_updated_at();
+        """,
+        # booknetic_customers + trigger
+        """
+        create table if not exists booknetic_customers (
+            id text primary key,
+            name text,
+            email text,
+            phone text,
+            status text,
+            raw jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_booknetic_cust_updated_at on booknetic_customers;
+        """,
+        """
+        create trigger trg_booknetic_cust_updated_at
+        before update on booknetic_customers
         for each row execute procedure set_updated_at();
         """,
     ]

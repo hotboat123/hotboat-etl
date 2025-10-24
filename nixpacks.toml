@@ -1,4 +1,5 @@
 [phases.setup]
+# System packages required by Selenium/Chromium
 nixPkgs = [
   "python311",
   "chromium",
@@ -23,5 +24,13 @@ nixPkgs = [
   "xorg.libXrandr",
   "xorg.libXfixes",
   "xorg.libXrender"
+]
+
+[phases.install]
+# Export CHROME_BIN so Selenium knows where chromium is in Nix
+cmds = [
+  "echo Exporting CHROME_BIN...",
+  "CHROME=$(command -v chromium || true)",
+  "if [ -n \"$CHROME\" ]; then echo \"export CHROME_BIN=$CHROME\" >> /root/.profile; fi"
 ]
 

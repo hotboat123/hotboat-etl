@@ -5,13 +5,11 @@ import os
 import time
 from typing import Any, Dict, List
 
-import chromedriver_autoinstaller
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 import shutil
 import glob
 
@@ -58,7 +56,6 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
     if not base_url or not username or not password:
         raise RuntimeError("BOOKNETIC_URL/USERNAME/PASSWORD not set for selenium export")
 
-    driver_path = chromedriver_autoinstaller.install()
     opts = Options()
     opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
@@ -87,8 +84,9 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
     if not chrome_bin:
         raise RuntimeError("Chromium/Chrome binary not found; set CHROME_BIN or ensure chromium is installed")
 
-    service = Service(driver_path if driver_path else shutil.which("chromedriver"))
-    driver = webdriver.Chrome(service=service, options=opts)
+    # Prefer Selenium Manager to resolve chromedriver automatically
+    # When CHROME_BIN/binary_location is set, Selenium Manager matches the driver.
+    driver = webdriver.Chrome(options=opts)
     wait = WebDriverWait(driver, 20)
 
     try:

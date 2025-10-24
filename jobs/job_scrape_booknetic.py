@@ -76,6 +76,12 @@ def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
 def run() -> int:
     appts, customers = _fetch_booknetic()
+    payments: List[Dict[str, Any]] = []
+
+    # Some plugins may return dicts with 'payments' field via _try_plugin
+    if isinstance(appts, dict):
+        payments = appts.get("payments", [])
+        appts = appts.get("appointments", [])
 
     # Asegura id estable si falta utilizando hash
     for it in appts:
@@ -107,6 +113,19 @@ def run() -> int:
             rows=customers,
             conflict_columns=["id"],
             update_columns=["name", "email", "phone", "status", "raw"],
+        )
+
+    # Upsert payments if any
+    if payments:
+        for p in payments:
+            if not p.get("id"):
+                raw = f"{p.get('appointment_id','')}|{p.get('amount','')}|{p.get('paid_at','')}"
+                p["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+        affected += upsert_many(
+            table="booknetic_payments",
+            rows=payments,
+            conflict_columns=["id"],
+            update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"],
         )
 
     return affected

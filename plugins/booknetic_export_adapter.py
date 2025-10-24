@@ -4,7 +4,9 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import requests
+import io
 
 
 def _normalize_key(key: str) -> str:
@@ -25,6 +27,16 @@ def _parse_csv(path: Path) -> List[Dict[str, Any]]:
         reader = csv.DictReader(f)
         for r in reader:
             items.append(dict(r))
+    return items
+
+
+def _parse_csv_text(text: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    # Handle potential BOM and different newlines
+    text_stream = io.StringIO(text)
+    reader = csv.DictReader(text_stream)
+    for r in reader:
+        items.append(dict(r))
     return items
 
 
@@ -54,12 +66,49 @@ def _best_effort_map(row: Dict[str, Any]) -> Dict[str, Any]:
     return mapped
 
 
-def fetch() -> List[Dict[str, Any]]:
-    # Directorio donde el export guarda CSVs
+def fetch() -> Dict[str, List[Dict[str, Any]]]:
+    # 1) Prefer URLs si están definidas
+    url_appts = os.getenv("BOOKNETIC_EXPORT_URL_APPOINTMENTS") or os.getenv("BOOKNETIC_EXPORT_URL")
+    if url_appts:
+        try:
+            resp = requests.get(url_appts, timeout=60)
+            resp.raise_for_status()
+            text = resp.content.decode("utf-8-sig", errors="replace")
+            rows = _parse_csv_text(text)
+            mapped_appts = [_best_effort_map(r) for r in rows]
+            print(f"[booknetic-export] loaded {len(mapped_appts)} appointment rows from URL")
+            # Optional secondary URL for payments
+            pays_url = os.getenv("BOOKNETIC_EXPORT_URL_PAYMENTS")
+            mapped_pays: List[Dict[str, Any]] = []
+            if pays_url:
+                try:
+                    resp2 = requests.get(pays_url, timeout=60)
+                    resp2.raise_for_status()
+                    text2 = resp2.content.decode("utf-8-sig", errors="replace")
+                    rows2 = _parse_csv_text(text2)
+                    # Map payments minimal fields
+                    for r in rows2:
+                        mapped_pays.append({
+                            "id": r.get("id") or r.get("payment_id") or r.get("ID"),
+                            "appointment_id": r.get("appointment_id") or r.get("appointmentID"),
+                            "amount": r.get("amount") or r.get("total"),
+                            "currency": r.get("currency"),
+                            "status": r.get("status"),
+                            "method": r.get("method"),
+                            "paid_at": r.get("paid_at") or r.get("date"),
+                            "raw": { _normalize_key(k): v for k, v in r.items() },
+                        })
+                    print(f"[booknetic-export] loaded {len(mapped_pays)} payment rows from URL")
+                except Exception as e:  # noqa: BLE001
+                    print(f"[booknetic-export] failed to load payments URL: {e}")
+            return {"appointments": mapped_appts, "payments": mapped_pays}
+        except Exception as e:  # noqa: BLE001
+            print(f"[booknetic-export] failed to load URL: {e}")
+
+    # 2) Ejecutar script (opcional) y leer desde directorio
     export_dir = os.getenv("BOOKNETIC_EXPORT_DIR", os.path.join(os.getcwd(), "archivos_input", "Archivos input reservas"))
     run_script = os.getenv("BOOKNETIC_USE_EXPORT_SCRIPT", "").strip().lower() in {"1", "true", "yes", "y"}
 
-    # Opcional: ejecutar el script de export si así se configura
     if run_script:
         try:
             from jobs.booknetic_export import main as export_main
@@ -72,7 +121,6 @@ def fetch() -> List[Dict[str, Any]]:
         print(f"[booknetic-export] export_dir not found: {folder}")
         return []
 
-    # Preferimos appointments_*.csv; si no, cualquier .csv reciente
     csvs = sorted(
         [p for p in folder.glob("appointments_*.csv")] or [p for p in folder.glob("*.csv")],
         key=lambda p: p.stat().st_mtime,
@@ -84,7 +132,7 @@ def fetch() -> List[Dict[str, Any]]:
 
     latest = csvs[0]
     rows = _parse_csv(latest)
-    mapped = [_best_effort_map(r) for r in rows]
-    return mapped
+    mapped_appts = [_best_effort_map(r) for r in rows]
+    return {"appointments": mapped_appts}
 
 

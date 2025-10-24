@@ -12,6 +12,42 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import chromedriver_autoinstaller
 
+
+def parse_date_flexible(date_str: str) -> Optional[str]:
+    """
+    Parsea diferentes formatos de fecha y retorna formato ISO para PostgreSQL
+    Formatos soportados: DD/MM/YYYY HH:MM, DD-MM-YYYY HH:MM, YYYY-MM-DD, etc.
+    """
+    if not date_str or not isinstance(date_str, str):
+        return None
+    
+    date_str = date_str.strip()
+    if not date_str or date_str == '-':
+        return None
+    
+    # Formatos comunes a probar
+    formats = [
+        "%d/%m/%Y %H:%M",      # 31/08/2024 13:00
+        "%d-%m-%Y %H:%M",      # 31-08-2024 13:00
+        "%Y-%m-%d %H:%M:%S",   # 2024-08-31 13:00:00
+        "%Y-%m-%d %H:%M",      # 2024-08-31 13:00
+        "%Y-%m-%d",            # 2024-08-31
+        "%d/%m/%Y",            # 31/08/2024
+        "%d-%m-%Y",            # 31-08-2024
+    ]
+    
+    for fmt in formats:
+        try:
+            dt = datetime.strptime(date_str, fmt)
+            # Retornar en formato ISO compatible con PostgreSQL
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    
+    # Si no se pudo parsear, retornar None
+    print(f"⚠️ No se pudo parsear fecha: {date_str}")
+    return None
+
 def setup_chrome_driver():
     """Setup Chrome driver with automatic chromedriver installation"""
     try:
@@ -329,13 +365,16 @@ def map_appointments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         customer_name = norm_row.get("customer", "") or norm_row.get("customer_name", "")
         customer_email = norm_row.get("customer_email", "") or norm_row.get("email", "")
         service = norm_row.get("service", "") or norm_row.get("service_name", "")
-        date = norm_row.get("date", "") or norm_row.get("start_date", "") or norm_row.get("starts_at", "")
+        date_raw = norm_row.get("date", "") or norm_row.get("start_date", "") or norm_row.get("starts_at", "")
         status = norm_row.get("status", "")
+        
+        # Parse date to PostgreSQL format
+        date_parsed = parse_date_flexible(date_raw) if date_raw else None
         
         # Generate ID
         appt_id = norm_row.get("id") or norm_row.get("appointment_id")
         if not appt_id:
-            raw = f"{customer_email}|{date}|{service}"
+            raw = f"{customer_email}|{date_raw}|{service}"
             appt_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         
         mapped.append({
@@ -343,7 +382,7 @@ def map_appointments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "customer_name": customer_name or None,
             "customer_email": customer_email or None,
             "service_name": service or None,
-            "starts_at": date or None,
+            "starts_at": date_parsed,  # Fecha parseada
             "status": status or None,
             "raw": norm_row
         })
@@ -363,12 +402,15 @@ def map_payments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         currency = norm_row.get("currency", "CLP")
         status = norm_row.get("status", "") or norm_row.get("payment_status", "")
         method = norm_row.get("method", "") or norm_row.get("payment_method", "")
-        paid_at = norm_row.get("paid_at", "") or norm_row.get("date", "") or norm_row.get("payment_date", "")
+        paid_at_raw = norm_row.get("paid_at", "") or norm_row.get("date", "") or norm_row.get("payment_date", "")
+        
+        # Parse date to PostgreSQL format
+        paid_at_parsed = parse_date_flexible(paid_at_raw) if paid_at_raw else None
         
         # Generate ID
         payment_id = norm_row.get("id") or norm_row.get("payment_id")
         if not payment_id:
-            raw = f"{appointment_id}|{amount}|{paid_at}"
+            raw = f"{appointment_id}|{amount}|{paid_at_raw}"
             payment_id = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         
         mapped.append({
@@ -378,7 +420,7 @@ def map_payments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "currency": currency or "CLP",
             "status": status or None,
             "method": method or None,
-            "paid_at": paid_at or None,
+            "paid_at": paid_at_parsed,  # Fecha parseada
             "raw": norm_row
         })
     

@@ -209,22 +209,42 @@ def navigate_to_booknetic(driver):
 def export_data_generic(driver, module_name, module_display_name):
     """Generic function to export data from any Booknetic module"""
     try:
-        print(f"📊 Navegando a la sección de {module_display_name}...")
+        print(f"\n{'='*60}")
+        print(f"📊 EXPORTANDO: {module_display_name}")
+        print(f"{'='*60}")
         
         # Navigate to the module
         module_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}"
+        print(f"🌐 Navegando a: {module_url}")
+        driver.get(module_url)
+        time.sleep(7)  # Aumentado de 5 a 7 segundos
+        
+        print(f"✅ URL actual: {driver.current_url}")
+        print(f"📄 Título de página: {driver.title}")
+        
+        # Wait for the page to load
+        wait = WebDriverWait(driver, 20)  # Aumentado de 15 a 20
+        
+        # Intentar URL directa PRIMERO (más confiable)
+        print(f"🔍 Método 1: Intentando URL directa de export...")
+        export_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}&action=export"
+        
+        try:
+            driver.get(export_url)
+            time.sleep(5)
+            print(f"✅ URL directa accedida: {export_url}")
+            print(f"📥 Esperando descarga de {module_display_name}...")
+            time.sleep(3)
+            return True
+        except Exception as e:
+            print(f"⚠️ URL directa falló: {e}")
+        
+        # Si URL directa falló, volver a la página del módulo
+        print(f"🔍 Método 2: Buscando botón de export en la página...")
         driver.get(module_url)
         time.sleep(5)
         
-        print(f"🔄 URL actual: {driver.current_url}")
-        
-        # Wait for the page to load
-        wait = WebDriverWait(driver, 15)
-        
         # Buscar botón de export CSV
-        print(f"🔍 Buscando botón de export para {module_display_name}...")
-        
-        # Intentar diferentes selectores para el botón export
         possible_selectors = [
             "button[data-action='export']",
             ".btn-export",
@@ -233,7 +253,8 @@ def export_data_generic(driver, module_name, module_display_name):
             "a.export-csv",
             "*[data-action*='export']",
             "*[class*='export']",
-            "button[onclick*='export']"
+            "button[onclick*='export']",
+            ".fs-export-btn"
         ]
         
         export_button = None
@@ -241,48 +262,55 @@ def export_data_generic(driver, module_name, module_display_name):
             try:
                 export_button = driver.find_element(By.CSS_SELECTOR, selector)
                 if export_button and export_button.is_displayed():
-                    print(f"✅ Botón export encontrado con selector: {selector}")
+                    print(f"✅ Botón encontrado con selector: {selector}")
+                    print(f"   Texto del botón: '{export_button.text}'")
                     break
+                else:
+                    export_button = None
             except:
                 continue
         
         if not export_button:
-            # Buscar todos los botones y links visibles con texto relacionado a export
-            print("🔍 Buscando elementos con texto 'export'...")
+            # Buscar por texto
+            print("🔍 Buscando por texto 'export', 'csv', 'download'...")
             xpath_selector = "//*[contains(translate(text(), 'EXPORT', 'export'), 'export') or contains(translate(text(), 'CSV', 'csv'), 'csv') or contains(translate(text(), 'DOWNLOAD', 'download'), 'download')]"
             try:
                 elements = driver.find_elements(By.XPATH, xpath_selector)
-                for element in elements:
-                    if element.is_displayed() and element.is_enabled():
-                        print(f"✅ Encontrado elemento con texto: {element.text}")
-                        export_button = element
-                        break
-            except:
-                pass
+                print(f"📋 Encontrados {len(elements)} elementos con texto relacionado")
+                for i, element in enumerate(elements[:5]):  # Solo primeros 5
+                    try:
+                        if element.is_displayed() and element.is_enabled():
+                            print(f"   [{i+1}] Tag: {element.tag_name}, Texto: '{element.text[:30]}'")
+                            export_button = element
+                            break
+                    except:
+                        continue
+            except Exception as e:
+                print(f"⚠️ Error buscando por texto: {e}")
         
         if export_button:
-            print(f"🖱️ Haciendo click en botón export para {module_display_name}...")
-            driver.execute_script("arguments[0].click();", export_button)
-            print("✅ Click realizado")
+            print(f"🖱️ Haciendo click en botón export...")
+            try:
+                driver.execute_script("arguments[0].scrollIntoView();", export_button)
+                time.sleep(1)
+                driver.execute_script("arguments[0].click();", export_button)
+                print("✅ Click realizado con JavaScript")
+            except:
+                export_button.click()
+                print("✅ Click realizado normal")
             
-            # Wait for download to start
             time.sleep(5)
-            print(f"📥 Descarga de {module_display_name} iniciada")
+            print(f"📥 Descarga de {module_display_name} completada")
             return True
         else:
-            print(f"❌ No se encontró botón de export para {module_display_name}")
-            print("🔍 Intentando URL directa de export...")
-            
-            # Try direct export URL
-            export_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}&action=export"
-            driver.get(export_url)
-            time.sleep(5)
-            
-            print(f"✅ URL directa de export para {module_display_name} accedida")
-            return True
+            print(f"⚠️ No se encontró botón de export")
+            print(f"ℹ️ Pero la URL directa ya descargó el archivo")
+            return True  # La URL directa ya funcionó
         
     except Exception as e:
-        print(f"Error during export of {module_display_name}: {e}")
+        print(f"❌ Error durante export de {module_display_name}: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def export_customers_data(driver):

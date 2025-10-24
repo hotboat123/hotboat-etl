@@ -1,0 +1,12 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python jobs/runner.py"
+
+# Opcional: variables por defecto (puedes definirlas en Railway UI)
+[variables]
+PYTHONUNBUFFERED = "1"
+TZ = "UTC"
+
+

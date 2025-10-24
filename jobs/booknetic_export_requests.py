@@ -12,9 +12,6 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 
-# Database imports
-from db.core import get_pool
-
 # Configuración
 BASE_URL = os.getenv("BOOKNETIC_URL", "https://hotboatchile.com")
 USERNAME = os.getenv("BOOKNETIC_USERNAME", "")
@@ -273,90 +270,6 @@ def map_payments_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
     
     return mapped
-
-
-def load_csv_to_database(csv_files: Dict[str, Path]):
-    """Load CSV data to PostgreSQL and return mapped data"""
-    print("\n" + "="*60)
-    print("📤 CARGANDO DATOS A POSTGRESQL")
-    print("="*60)
-    
-    pool = get_pool()
-    
-    # Mappers
-    mappers = {
-        "customers": map_customers_to_db,
-        "appointments": map_appointments_to_db,
-        "payments": map_payments_to_db
-    }
-    
-    # Tables
-    tables = {
-        "customers": "booknetic_customers",
-        "appointments": "booknetic_appointments",
-        "payments": "booknetic_payments"
-    }
-    
-    results = {
-        "customers": [],
-        "appointments": [],
-        "payments": []
-    }
-    
-    for module_name, csv_path in csv_files.items():
-        if not csv_path or not csv_path.exists():
-            print(f"⚠️ CSV no encontrado para {module_name}")
-            continue
-        
-        print(f"\n📁 Procesando {csv_path.name}...")
-        
-        try:
-            # Parse CSV
-            rows = parse_csv_file(csv_path)
-            print(f"   📊 {len(rows)} filas leídas del CSV")
-            
-            # Map to DB format
-            mapper = mappers.get(module_name)
-            if not mapper:
-                print(f"   ⚠️ No hay mapper para {module_name}")
-                continue
-            
-            mapped = mapper(rows)
-            print(f"   🔄 {len(mapped)} filas mapeadas")
-            
-            # Store mapped data
-            results[module_name] = mapped
-            
-            # Upsert to DB
-            table = tables.get(module_name)
-            if not table:
-                print(f"   ⚠️ No hay tabla para {module_name}")
-                continue
-            
-            with pool.connection() as conn:
-                with conn.cursor() as cur:
-                    # Prepare upsert
-                    for item in mapped:
-                        keys = list(item.keys())
-                        placeholders = ", ".join([f"%({k})s" for k in keys])
-                        updates = ", ".join([f"{k} = EXCLUDED.{k}" for k in keys if k != "id"])
-                        
-                        sql = f"""
-                        INSERT INTO {table} ({", ".join(keys)})
-                        VALUES ({placeholders})
-                        ON CONFLICT (id) DO UPDATE SET {updates}
-                        """
-                        cur.execute(sql, item)
-                    
-                    conn.commit()
-                    print(f"   ✅ {len(mapped)} registros insertados/actualizados en {table}")
-        
-        except Exception as e:
-            print(f"   ❌ Error procesando {module_name}: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    return results
 
 
 def fetch() -> Dict[str, Any]:

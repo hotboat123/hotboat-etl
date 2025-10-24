@@ -27,8 +27,12 @@ nixPkgs = [
 ]
 
 [phases.install]
-# Export CHROME_BIN so Selenium knows where chromium is in Nix
+# Install Python dependencies
 cmds = [
+  "echo '=== Installing Python dependencies ==='",
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt",
+  "echo '=== Python dependencies installed ==='",
   "echo Exporting CHROME_BIN...",
   "CHROME=$(command -v chromium || true)",
   "if [ -n \"$CHROME\" ]; then echo \"export CHROME_BIN=$CHROME\" >> /root/.profile; fi"

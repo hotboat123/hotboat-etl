@@ -4,12 +4,16 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from dotenv import load_dotenv
 
 from db.utils import run_with_job_meta
+from db.migrate import ensure_schema
 from jobs.job_import_sheets import run as run_sheets
 from jobs.job_scrape_booknetic import run as run_booknetic
 
 
 def main() -> None:
     load_dotenv()  # no-op in Railway, useful local
+
+    # Ensure DB schema exists before scheduling jobs
+    ensure_schema()
 
     scheduler = BlockingScheduler(timezone=os.getenv("TZ", "UTC"))
 

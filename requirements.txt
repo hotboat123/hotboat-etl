@@ -1,12 +1,11 @@
-apscheduler
-psycopg[binary]==3.2.2
-psycopg_pool==3.2.2
-gspread==6.1.2
-google-auth==2.35.0
-python-dotenv==1.0.1
-requests==2.32.3
-pytz==2024.1
-tzlocal==5.2
-selenium==4.25.0
-chromedriver-autoinstaller==0.6.4
+apscheduler>=3.10.0
+psycopg[binary]>=3.2.0
+psycopg_pool>=3.2.0
+gspread>=6.0.0
+google-auth>=2.0.0
+python-dotenv>=1.0.0
+requests>=2.32.0
+pytz>=2024.0
+tzlocal>=5.0
+selenium>=4.25.0
 

@@ -2,7 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python -m jobs.runner"
+startCommand = "/opt/venv/bin/python -m jobs.runner"
 
 # Opcional: variables por defecto (puedes definirlas en Railway UI)
 [variables]

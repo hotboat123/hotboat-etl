@@ -1,8 +1,10 @@
 import os
 import time
+import base64
+import io
 import datetime as dt
 from apscheduler.schedulers.blocking import BlockingScheduler
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
 from db.utils import run_with_job_meta, print_db_identity
 from db.migrate import ensure_schema
@@ -10,8 +12,23 @@ from jobs.job_import_sheets import run as run_sheets
 from jobs.job_scrape_booknetic import run as run_booknetic
 
 
+def load_env() -> None:
+    # Load .env if present in container (useful locally)
+    load_dotenv()
+    # Optionally load a base64-encoded .env provided via env var (Railway-safe)
+    b64 = os.getenv("DOTENV_BASE64")
+    if b64:
+        try:
+            content = base64.b64decode(b64).decode("utf-8")
+            for k, v in (dotenv_values(stream=io.StringIO(content)) or {}).items():
+                if v is not None and k not in os.environ:
+                    os.environ[k] = v
+        except Exception as e:  # noqa: BLE001
+            print(f"[env] Failed to load DOTENV_BASE64: {e}")
+
+
 def main() -> None:
-    load_dotenv()  # no-op in Railway, useful local
+    load_env()
 
     # Ensure DB schema exists before scheduling jobs
     print_db_identity()
@@ -39,7 +56,7 @@ def main() -> None:
     scheduler.add_job(
         lambda: run_with_job_meta("sheets_import", run_sheets),
         trigger="cron",
-        minute="*",
+        minute="*/10",
         id="sheets_cron",
         replace_existing=True,
     )

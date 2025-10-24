@@ -19,7 +19,7 @@ def main() -> None:
     scheduler = BlockingScheduler(timezone=os.getenv("TZ", "UTC"))
 
     scheduler.add_job(lambda: run_with_job_meta("sheets_import", run_sheets), trigger="cron", minute="*")
-    scheduler.add_job(lambda: run_with_job_meta("booknetic_scrape", run_booknetic), trigger="cron", minute="*/15")
+    scheduler.add_job(lambda: run_with_job_meta("booknetic_scrape", run_booknetic), trigger="cron", minute="*/")
 
     print("[runner] Scheduler started. Cron: sheets @ *; booknetic @ */15")
     try:

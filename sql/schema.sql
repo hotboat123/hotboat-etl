@@ -42,4 +42,21 @@ create trigger trg_booknetic_updated_at
 before update on booknetic_appointments
 for each row execute procedure set_updated_at();
 
+-- Customers table
+create table if not exists booknetic_customers (
+    id text primary key,
+    name text,
+    email text,
+    phone text,
+    status text,
+    raw jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_booknetic_cust_updated_at on booknetic_customers;
+create trigger trg_booknetic_cust_updated_at
+before update on booknetic_customers
+for each row execute procedure set_updated_at();
+
 

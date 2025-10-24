@@ -29,6 +29,10 @@ def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         appts, custs = _try_plugin(plugin_module)
         if appts or custs:
             return appts, custs
+        # Si el usuario especificó un plugin explícito pero no hubo datos,
+        # no forzamos la ruta API; devolvemos vacío para no romper por envs faltantes
+        print(f"[booknetic] plugin '{plugin_module}' returned no data; skipping API fallback")
+        return [], []
 
     # 2) Autodetect common plugins if env not set
     for candidate in [
@@ -39,10 +43,11 @@ def _fetch_booknetic() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
         if appts or custs:
             return appts, custs
 
-    base_url = os.getenv("BOOKNETIC_BASE_URL")
+    # 3) Fallback API: acepta alias de variables
+    base_url = os.getenv("BOOKNETIC_BASE_URL") or os.getenv("BOOKNETIC_URL")
     token = os.getenv("BOOKNETIC_TOKEN")
     if not base_url or not token:
-        raise RuntimeError("BOOKNETIC_BASE_URL/BOOKNETIC_TOKEN no definidos")
+        raise RuntimeError("BOOKNETIC_BASE_URL/BOOKNETIC_TOKEN no definidos (o usa BOOKNETIC_PLUGIN_MODULE)")
 
     # EJEMPLO: ajusta al endpoint real de tu instancia Booknetic
     url = f"{base_url.rstrip('/')}/wp-json/booknetic/v1/appointments"

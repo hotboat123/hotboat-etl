@@ -1,7 +1,7 @@
 import base64
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -30,9 +30,22 @@ def _map_row_by_headers(headers: List[str], row: List[Any]) -> Dict[str, Any]:
     return values
 
 
+def _apply_col_map(record: Dict[str, Any], col_map: Optional[Dict[str, str]]) -> Dict[str, Any]:
+    if not col_map:
+        return record
+    # Normaliza claves del mapping y aplica: origen -> destino (id/name/email/phone)
+    normalized_map: Dict[str, str] = {
+        (k or "").strip().lower().replace(" ", "_"): v for k, v in col_map.items()
+    }
+    result = dict(record)
+    for src_key, dest_key in normalized_map.items():
+        if dest_key in {"id", "name", "email", "phone"} and dest_key not in result:
+            result[dest_key] = record.get(src_key)
+    return result
+
+
 def _transform(record: Dict[str, Any]) -> Dict[str, Any]:
     # Personaliza este mapeo a tu esquema objetivo
-    # Ejemplo de columnas esperadas en Sheets: id, name, email, phone
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -52,14 +65,43 @@ def run() -> int:
     sh = gc.open_by_key(spreadsheet_id)
     ws = sh.worksheet(worksheet_name)
 
+    print(f"[sheets] spreadsheet_id={spreadsheet_id} worksheet={worksheet_name}")
     rows = ws.get_all_values()
     if not rows:
         return 0
     headers = rows[0]
     data_rows = rows[1:]
 
+    print(f"[sheets] headers(normalized)={[(h or '').strip().lower().replace(' ', '_') for h in headers]}")
+    print(f"[sheets] fetched_rows={len(data_rows)}")
+
     mapped: List[Dict[str, Any]] = [_map_row_by_headers(headers, r) for r in data_rows]
-    transformed = [_transform(m) for m in mapped if m.get("id")]
+
+    # Optional column mapping from env JSON: {"id_cliente":"id","correo":"email"}
+    col_map_env = os.getenv("SHEETS_COL_MAP_JSON")
+    col_map: Optional[Dict[str, str]] = None
+    if col_map_env:
+        try:
+            col_map = json.loads(col_map_env)
+        except Exception:  # noqa: BLE001
+            col_map = None
+
+    mapped_with_aliases = [_apply_col_map(m, col_map) for m in mapped]
+
+    # Optional: use email as id if id is missing
+    use_email_as_id = os.getenv("SHEETS_USE_EMAIL_AS_ID", "").strip().lower() in {"1", "true", "yes", "y"}
+    if use_email_as_id:
+        for rec in mapped_with_aliases:
+            if not rec.get("id") and rec.get("email"):
+                rec["id"] = rec.get("email")
+
+    has_id = sum(1 for m in mapped_with_aliases if m.get("id"))
+    has_email = sum(1 for m in mapped_with_aliases if m.get("email"))
+    sample = mapped_with_aliases[:2]
+    print(f"[sheets] records_with_id={has_id} records_with_email={has_email} sample_keys={[list(s.keys()) for s in sample]}")
+
+    transformed = [_transform(m) for m in mapped_with_aliases if m.get("id")]
+    print(f"[sheets] to_upsert={len(transformed)}")
 
     # Upsert a tabla destino
     affected = upsert_many(

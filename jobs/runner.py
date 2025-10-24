@@ -3,10 +3,16 @@ Runner simple SIN APScheduler - usa loop + sleep
 Compatible con Railway y más confiable
 """
 import os
+import sys
 import time
 import base64
 import io
 import datetime as dt
+
+# Agregar la raíz del proyecto al path para que funcione desde cualquier directorio
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from db.utils import run_with_job_meta, print_db_identity
 from db.migrate import ensure_schema

@@ -5,6 +5,8 @@ import re
 from typing import Any, Dict, List
 
 import requests
+import json
+from urllib.parse import urljoin
 
 
 def _normalize_key(key: str) -> str:
@@ -41,6 +43,28 @@ def _download_csv(session: requests.Session, url: str) -> List[Dict[str, Any]]:
     text = resp.content.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
     return [dict(r) for r in reader]
+
+
+def _discover_export_url(session: requests.Session, base_url: str, module: str) -> str:
+    """Try to discover a real export URL from the module admin page HTML."""
+    admin_url = base_url.rstrip("/") + f"/wp-admin/admin.php?page=booknetic&module={module}"
+    try:
+        html = session.get(admin_url, timeout=60).text
+        # Look for any href containing module and export
+        m = re.search(r'href=["\']([^"\']*module=' + re.escape(module) + r'[^"\']*export[^"\']*)["\']', html, re.IGNORECASE)
+        if m:
+            href = m.group(1)
+            if href.startswith('http'):
+                return href
+            return urljoin(base_url, href)
+        # Look for admin-ajax endpoints with action export
+        m = re.search(r'(admin-ajax\.php[^"\']*action[^"\']*export[^"\']*)', html, re.IGNORECASE)
+        if m:
+            return urljoin(base_url, '/wp-admin/' + m.group(1))
+    except Exception:
+        pass
+    # Fallback to the generic pattern (may return HTML)
+    return base_url.rstrip('/') + f"/wp-admin/admin.php?page=booknetic&module={module}&action=export"
 
 
 def _best_map_appointment(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -110,14 +134,21 @@ def _best_map_payment(row: Dict[str, Any]) -> Dict[str, Any]:
                 return k
         return None
 
+    def norm_val(v):
+        if v is None:
+            return None
+        if isinstance(v, (list, dict)):
+            return json.dumps(v, ensure_ascii=False, sort_keys=True)
+        return str(v)
+
     mapped = {
-        "id": row.get(fk(["payment_id", "id", "ID"])) ,
-        "appointment_id": row.get(fk(["appointment_id", "appointmentid", "booking_id", "bookingid"])),
-        "amount": row.get(fk(["amount", "total", "monto"])) ,
-        "currency": row.get(fk(["currency", "moneda"])) ,
-        "status": row.get(fk(["status", "estado"])) ,
-        "method": row.get(fk(["method", "metodo"])) ,
-        "paid_at": row.get(fk(["date", "paid_at", "fecha"])) ,
+        "id": norm_val(row.get(fk(["payment_id", "id", "ID"]))),
+        "appointment_id": norm_val(row.get(fk(["appointment_id", "appointmentid", "booking_id", "bookingid"]))),
+        "amount": norm_val(row.get(fk(["amount", "total", "monto"]))),
+        "currency": norm_val(row.get(fk(["currency", "moneda"]))),
+        "status": norm_val(row.get(fk(["status", "estado"]))),
+        "method": norm_val(row.get(fk(["method", "metodo"]))),
+        "paid_at": norm_val(row.get(fk(["date", "paid_at", "fecha"]))),
         "raw": { _normalize_key(k): v for k, v in row.items() },
     }
     if not mapped["id"]:
@@ -141,9 +172,9 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
     _login_wp(s, base_url, username, password)
 
     urls = {
-        "appointments": base_url.rstrip("/") + "/wp-admin/admin.php?page=booknetic&module=appointments&action=export",
-        "customers": base_url.rstrip("/") + "/wp-admin/admin.php?page=booknetic&module=customers&action=export",
-        "payments": base_url.rstrip("/") + "/wp-admin/admin.php?page=booknetic&module=payments&action=export",
+        "appointments": _discover_export_url(s, base_url, "appointments"),
+        "customers": _discover_export_url(s, base_url, "customers"),
+        "payments": _discover_export_url(s, base_url, "payments"),
     }
 
     results: Dict[str, List[Dict[str, Any]]] = {"appointments": [], "customers": [], "payments": []}
@@ -167,7 +198,7 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
         rows = _download_csv(s, urls["payments"]) or []
         mapped = [_best_map_payment(r) for r in rows]
         results["payments"] = mapped
-        print(f"[booknetic-http] payments rows={len(mapped)} distinct_ids={len({m.get('id') for m in mapped})}")
+        print(f"[booknetic-http] payments rows={len(mapped)} distinct_ids={len({str(m.get('id')) for m in mapped})}")
     except Exception as e:
         print(f"[booknetic-http] payments export failed: {e}")
 

@@ -1,0 +1,40 @@
+[phases.setup]
+# System packages required by Selenium/Chromium
+nixPkgs = [
+  "python311",
+  "chromium",
+  "chromedriver",
+  "nss",
+  "freetype",
+  "fontconfig",
+  "pango",
+  "cairo",
+  "gdk-pixbuf",
+  "gtk3",
+  "atk",
+  "at-spi2-atk",
+  "alsa-lib",
+  "xorg.libX11",
+  "xorg.libXcomposite",
+  "xorg.libXcursor",
+  "xorg.libXdamage",
+  "xorg.libXext",
+  "xorg.libXi",
+  "xorg.libXtst",
+  "xorg.libXrandr",
+  "xorg.libXfixes",
+  "xorg.libXrender"
+]
+
+[phases.install]
+# Install Python dependencies
+cmds = [
+  "echo '=== Installing Python dependencies ==='",
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt",
+  "echo '=== Python dependencies installed ==='",
+  "echo Exporting CHROME_BIN...",
+  "CHROME=$(command -v chromium || true)",
+  "if [ -n \"$CHROME\" ]; then echo \"export CHROME_BIN=$CHROME\" >> /root/.profile; fi"
+]
+

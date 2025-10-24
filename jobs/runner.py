@@ -7,11 +7,18 @@ import time
 import base64
 import io
 import datetime as dt
-from dotenv import load_dotenv, dotenv_values
 
 from db.utils import run_with_job_meta, print_db_identity
 from db.migrate import ensure_schema
 from jobs.job_scrape_booknetic import run as run_booknetic
+
+# Importar dotenv solo si está disponible (para desarrollo local)
+try:
+    from dotenv import load_dotenv, dotenv_values
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+    print("[env] python-dotenv not available - using system env vars only (OK for Railway)")
 
 # Importar sheets solo si está configurado
 try:
@@ -24,18 +31,24 @@ except Exception:
 
 def load_env() -> None:
     """Load environment variables"""
-    # Load .env if present in container (useful locally)
-    load_dotenv()
-    # Optionally load a base64-encoded .env provided via env var (Railway-safe)
-    b64 = os.getenv("DOTENV_BASE64")
-    if b64:
-        try:
-            content = base64.b64decode(b64).decode("utf-8")
-            for k, v in (dotenv_values(stream=io.StringIO(content)) or {}).items():
-                if v is not None and k not in os.environ:
-                    os.environ[k] = v
-        except Exception as e:  # noqa: BLE001
-            print(f"[env] Failed to load DOTENV_BASE64: {e}")
+    if DOTENV_AVAILABLE:
+        # Load .env if present in container (useful locally)
+        load_dotenv()
+        print("[env] Loaded .env file")
+        
+        # Optionally load a base64-encoded .env provided via env var (Railway-safe)
+        b64 = os.getenv("DOTENV_BASE64")
+        if b64:
+            try:
+                content = base64.b64decode(b64).decode("utf-8")
+                for k, v in (dotenv_values(stream=io.StringIO(content)) or {}).items():
+                    if v is not None and k not in os.environ:
+                        os.environ[k] = v
+                print("[env] Loaded DOTENV_BASE64")
+            except Exception as e:  # noqa: BLE001
+                print(f"[env] Failed to load DOTENV_BASE64: {e}")
+    else:
+        print("[env] Using system environment variables (Railway mode)")
 
 
 def run_job_safely(job_name: str, job_func):

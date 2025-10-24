@@ -6,7 +6,7 @@ Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railwa
 1. Conecta el repo a Railway
 2. Añade el plugin Postgres → copia `DATABASE_URL`
 3. Variables de entorno: `DATABASE_URL`, `GOOGLE_SA_JSON_BASE64`, `SHEETS_SPREADSHEET_ID`, `SHEETS_WORKSHEET_NAME`, `BOOKNETIC_BASE_URL`, `BOOKNETIC_TOKEN`
-4. Start Command: `python jobs/runner.py`
+4. Start Command: `python -m jobs.runner`
 5. Ejecuta `sql/schema.sql` y `sql/job_meta.sql` una vez
 
 ## Cron
@@ -21,7 +21,7 @@ Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railwa
 ## Desarrollo local
 1. Crea `.env` desde `.env.example`
 2. Instala dependencias: `pip install -r requirements.txt`
-3. Ejecuta: `python jobs/runner.py`
+3. Ejecuta: `python -m jobs.runner`
 
 ## Estructura
 ```

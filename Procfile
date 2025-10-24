@@ -1,2 +1,2 @@
-worker: python jobs/runner.py
+worker: python -m jobs.runner
 

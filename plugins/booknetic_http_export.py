@@ -54,9 +54,9 @@ def _best_map_appointment(row: Dict[str, Any]) -> Dict[str, Any]:
     email_k = find_key(["email"]) or find_key(["correo"])  # es/pt support
     name_k = find_key(["name", "customer", "cliente"]) 
     service_k = find_key(["service", "servicio"]) 
-    start_k = find_key(["start", "fecha", "date", "hora"]) 
+    start_k = find_key(["start", "fecha", "date", "hora", "start_time"]) 
     status_k = find_key(["status", "estado"]) 
-    id_k = find_key(["id"]) 
+    id_k = find_key(["appointment_id", "appointmentid", "booking_id", "bookingid", "id", "ID"]) 
 
     mapped = {
         "id": row.get(id_k) if id_k else None,
@@ -68,8 +68,9 @@ def _best_map_appointment(row: Dict[str, Any]) -> Dict[str, Any]:
         "raw": { _normalize_key(k): v for k, v in row.items() },
     }
     if not mapped["id"]:
-        raw = f"{mapped.get('customer_email','')}|{mapped.get('starts_at','')}|{mapped.get('service_name','')}"
-        mapped["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+        pieces = [f"{_normalize_key(k)}={str(v).strip()}" for k, v in sorted(row.items(), key=lambda kv: _normalize_key(kv[0]))]
+        fallback_raw = "|".join(pieces)
+        mapped["id"] = hashlib.sha1(fallback_raw.encode("utf-8")).hexdigest()
     return mapped
 
 
@@ -81,7 +82,7 @@ def _best_map_customer(row: Dict[str, Any]) -> Dict[str, Any]:
                 return k
         return None
 
-    id_k = fk(["id"]) 
+    id_k = fk(["customer_id", "id", "ID"]) 
     name_k = fk(["name", "customer", "cliente"]) 
     email_k = fk(["email", "correo"]) 
     phone_k = fk(["phone", "telefono", "tel"])
@@ -95,8 +96,9 @@ def _best_map_customer(row: Dict[str, Any]) -> Dict[str, Any]:
         "raw": { _normalize_key(k): v for k, v in row.items() },
     }
     if not mapped["id"]:
-        raw = f"{mapped.get('email','')}|{mapped.get('name','')}|{mapped.get('phone','')}"
-        mapped["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+        pieces = [f"{_normalize_key(k)}={str(v).strip()}" for k, v in sorted(row.items(), key=lambda kv: _normalize_key(kv[0]))]
+        fallback_raw = "|".join(pieces)
+        mapped["id"] = hashlib.sha1(fallback_raw.encode("utf-8")).hexdigest()
     return mapped
 
 
@@ -109,8 +111,8 @@ def _best_map_payment(row: Dict[str, Any]) -> Dict[str, Any]:
         return None
 
     mapped = {
-        "id": row.get(fk(["id", "payment_id"])) ,
-        "appointment_id": row.get(fk(["appointment_id", "appointmentid", "booking_id"])),
+        "id": row.get(fk(["payment_id", "id", "ID"])) ,
+        "appointment_id": row.get(fk(["appointment_id", "appointmentid", "booking_id", "bookingid"])),
         "amount": row.get(fk(["amount", "total", "monto"])) ,
         "currency": row.get(fk(["currency", "moneda"])) ,
         "status": row.get(fk(["status", "estado"])) ,
@@ -119,8 +121,9 @@ def _best_map_payment(row: Dict[str, Any]) -> Dict[str, Any]:
         "raw": { _normalize_key(k): v for k, v in row.items() },
     }
     if not mapped["id"]:
-        raw = f"{mapped.get('appointment_id','')}|{mapped.get('amount','')}|{mapped.get('paid_at','')}"
-        mapped["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
+        pieces = [f"{_normalize_key(k)}={str(v).strip()}" for k, v in sorted(row.items(), key=lambda kv: _normalize_key(kv[0]))]
+        fallback_raw = "|".join(pieces)
+        mapped["id"] = hashlib.sha1(fallback_raw.encode("utf-8")).hexdigest()
     return mapped
 
 
@@ -146,22 +149,25 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
     results: Dict[str, List[Dict[str, Any]]] = {"appointments": [], "customers": [], "payments": []}
     try:
         rows = _download_csv(s, urls["appointments"]) or []
-        results["appointments"] = [_best_map_appointment(r) for r in rows]
-        print(f"[booknetic-http] appointments rows={len(results['appointments'])}")
+        mapped = [_best_map_appointment(r) for r in rows]
+        results["appointments"] = mapped
+        print(f"[booknetic-http] appointments rows={len(mapped)} distinct_ids={len({m.get('id') for m in mapped})}")
     except Exception as e:
         print(f"[booknetic-http] appointments export failed: {e}")
 
     try:
         rows = _download_csv(s, urls["customers"]) or []
-        results["customers"] = [_best_map_customer(r) for r in rows]
-        print(f"[booknetic-http] customers rows={len(results['customers'])}")
+        mapped = [_best_map_customer(r) for r in rows]
+        results["customers"] = mapped
+        print(f"[booknetic-http] customers rows={len(mapped)} distinct_ids={len({m.get('id') for m in mapped})}")
     except Exception as e:
         print(f"[booknetic-http] customers export failed: {e}")
 
     try:
         rows = _download_csv(s, urls["payments"]) or []
-        results["payments"] = [_best_map_payment(r) for r in rows]
-        print(f"[booknetic-http] payments rows={len(results['payments'])}")
+        mapped = [_best_map_payment(r) for r in rows]
+        results["payments"] = mapped
+        print(f"[booknetic-http] payments rows={len(mapped)} distinct_ids={len({m.get('id') for m in mapped})}")
     except Exception as e:
         print(f"[booknetic-http] payments export failed: {e}")
 

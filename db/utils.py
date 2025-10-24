@@ -62,10 +62,10 @@ def upsert_many(
                 for _ in batch
             ),
             conflict=sql.SQL(", ").join(sql.Identifier(c) for c in conflict_columns),
-            updates=sql.SQL(", ").join(
-                sql.Identifier(c) + sql.SQL(" = EXCLUDED.") + sql.Identifier(c)
-                for c in update_columns
-            ),
+        updates=sql.SQL(", ").join(
+            sql.Identifier(c) + sql.SQL(" = EXCLUDED.") + sql.Identifier(c)
+            for c in update_columns
+        ),
         )
 
         flat_params: List[Any] = []

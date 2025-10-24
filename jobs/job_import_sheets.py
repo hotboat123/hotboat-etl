@@ -52,6 +52,7 @@ def _transform(record: Dict[str, Any]) -> Dict[str, Any]:
         "name": record.get("name"),
         "email": record.get("email"),
         "phone": record.get("phone"),
+        "raw": record,
         "source": "sheets",
     }
 
@@ -160,7 +161,7 @@ def run() -> int:
         table="leads",
         rows=transformed,
         conflict_columns=["id"],
-        update_columns=["name", "email", "phone", "source"],
+        update_columns=["name", "email", "phone", "raw", "source"],
     )
     return affected
 

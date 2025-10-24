@@ -1,3 +1,5 @@
+import hashlib
+import importlib
 import os
 from typing import Any, Dict, List
 
@@ -7,6 +9,16 @@ from db.utils import upsert_many
 
 
 def _fetch_booknetic() -> List[Dict[str, Any]]:
+    plugin_module = os.getenv("BOOKNETIC_PLUGIN_MODULE")
+    if plugin_module:
+        try:
+            mod = importlib.import_module(plugin_module)
+            data = mod.fetch()
+            if isinstance(data, list):
+                return data
+        except Exception as e:  # noqa: BLE001
+            print(f"[booknetic] plugin load failed: {e}")
+
     base_url = os.getenv("BOOKNETIC_BASE_URL")
     token = os.getenv("BOOKNETIC_TOKEN")
     if not base_url or not token:
@@ -38,6 +50,12 @@ def _fetch_booknetic() -> List[Dict[str, Any]]:
 
 def run() -> int:
     items = _fetch_booknetic()
+
+    # Asegura id estable si falta utilizando hash
+    for it in items:
+        if not it.get("id"):
+            raw = f"{it.get('customer_email','')}|{it.get('starts_at','')}|{it.get('service_name','')}"
+            it["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()
     affected = upsert_many(
         table="booknetic_appointments",
         rows=items,

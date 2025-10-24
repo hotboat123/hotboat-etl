@@ -5,6 +5,7 @@ create table if not exists leads (
     name text,
     email text,
     phone text,
+    raw jsonb,
     source text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()

@@ -3,6 +3,7 @@ import traceback
 from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
 
 from psycopg import sql
+from psycopg.types.json import Json
 
 from db.connection import get_connection
 
@@ -71,7 +72,10 @@ def upsert_many(
         flat_params: List[Any] = []
         for r in batch:
             for c in all_columns:
-                flat_params.append(r.get(c))
+                v = r.get(c)
+                if isinstance(v, (dict, list)):
+                    v = Json(v)
+                flat_params.append(v)
 
         with get_connection() as conn:
             with conn.cursor() as cur:

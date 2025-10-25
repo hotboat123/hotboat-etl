@@ -339,16 +339,27 @@ def normalize_key(key: str) -> str:
     return (key or "").strip().lower().replace(" ", "_")
 
 def parse_csv_file(file_path: Path) -> List[Dict[str, Any]]:
-    """Parse CSV file and return list of dicts"""
+    """Parse CSV file and return list of dicts with automatic encoding detection"""
     items = []
-    try:
-        with file_path.open("r", newline="", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                items.append(dict(row))
-        print(f"✅ Parsed {len(items)} rows from {file_path.name}")
-    except Exception as e:
-        print(f"❌ Error parsing {file_path.name}: {e}")
+    
+    # Try multiple encodings in order of likelihood
+    encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'windows-1252', 'cp1252']
+    
+    for encoding in encodings:
+        try:
+            with file_path.open("r", newline="", encoding=encoding) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    items.append(dict(row))
+            print(f"✅ Parsed {len(items)} rows from {file_path.name} (encoding: {encoding})")
+            return items
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+        except Exception as e:
+            print(f"❌ Error parsing {file_path.name} with {encoding}: {e}")
+            continue
+    
+    print(f"❌ Could not parse {file_path.name} with any known encoding")
     return items
 
 def map_customers_to_db(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

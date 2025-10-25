@@ -14,6 +14,9 @@ from bs4 import BeautifulSoup
 
 # Configuración
 BASE_URL = os.getenv("BOOKNETIC_URL", "https://hotboatchile.com")
+# Limpiar la URL si tiene /wp-login.php al final
+if BASE_URL.endswith('/wp-login.php'):
+    BASE_URL = BASE_URL.replace('/wp-login.php', '')
 USERNAME = os.getenv("BOOKNETIC_USERNAME", "")
 PASSWORD = os.getenv("BOOKNETIC_PASSWORD", "")
 DOWNLOADS_DIR = Path(__file__).parent.parent / "downloads"
@@ -29,55 +32,97 @@ def create_session_and_login() -> Optional[requests.Session]:
     
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
     })
     
-    # Step 1: Get login page to get cookies and nonce
+    # Step 1: Get login page to get cookies
     print(f"📄 Obteniendo página de login...")
     login_page_url = f"{BASE_URL}/wp-login.php"
     
     try:
         response = session.get(login_page_url, timeout=30)
         print(f"✅ Página de login obtenida (status: {response.status_code})")
+        
+        # Verificar si hay cookies
+        print(f"🍪 Cookies recibidas: {len(session.cookies)}")
+        
     except Exception as e:
         print(f"❌ Error obteniendo página de login: {e}")
         return None
     
-    # Step 2: Login POST
+    # Step 2: Login POST con headers adicionales
     print(f"🔑 Enviando credenciales de login...")
+    
     login_data = {
         'log': USERNAME,
         'pwd': PASSWORD,
-        'wp-submit': 'Log In',
+        'wp-submit': 'Acceder',  # Puede ser "Log In" o "Acceder" según idioma
         'redirect_to': f"{BASE_URL}/wp-admin/",
         'testcookie': '1'
     }
     
+    # Headers específicos para el POST
+    post_headers = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': BASE_URL,
+        'Referer': login_page_url,
+    }
+    
     try:
-        response = session.post(login_page_url, data=login_data, timeout=30, allow_redirects=True)
+        response = session.post(
+            login_page_url, 
+            data=login_data, 
+            headers=post_headers,
+            timeout=30, 
+            allow_redirects=True
+        )
         print(f"📬 Respuesta de login (status: {response.status_code})")
+        print(f"📍 URL final: {response.url}")
+        print(f"🍪 Cookies después de login: {len(session.cookies)}")
+        
+        # Verificar cookies de WordPress
+        wp_cookies = [c for c in session.cookies if 'wordpress' in c.name.lower()]
+        print(f"   Cookies de WordPress: {len(wp_cookies)}")
         
         # Verificar si el login fue exitoso
-        if 'wp-admin' in response.url or response.status_code == 200:
-            # Verificar que no estemos en la página de login
-            if 'wp-login.php' not in response.url:
-                print(f"✅ Login exitoso!")
-                print(f"   URL final: {response.url}")
-                return session
-            else:
-                print(f"❌ Login falló - seguimos en wp-login.php")
-                # Buscar mensaje de error
-                soup = BeautifulSoup(response.text, 'html.parser')
-                error_div = soup.find('div', {'id': 'login_error'})
-                if error_div:
-                    print(f"   Error: {error_div.get_text(strip=True)}")
-                return None
-        else:
-            print(f"❌ Login falló - status code: {response.status_code}")
-            return None
+        # Método 1: Verificar URL
+        if 'wp-admin' in response.url and 'wp-login.php' not in response.url:
+            print(f"✅ Login exitoso! (verificado por URL)")
+            return session
+        
+        # Método 2: Verificar cookies de autenticación de WordPress
+        auth_cookies = ['wordpress_logged_in', 'wordpress_sec']
+        has_auth = any(any(auth in c.name for auth in auth_cookies) for c in session.cookies)
+        
+        if has_auth:
+            print(f"✅ Login exitoso! (verificado por cookies)")
+            return session
+        
+        # Si llegamos aquí, el login falló
+        print(f"❌ Login falló")
+        
+        # Buscar mensaje de error
+        soup = BeautifulSoup(response.text, 'html.parser')
+        error_div = soup.find('div', {'id': 'login_error'})
+        if error_div:
+            print(f"   Error: {error_div.get_text(strip=True)}")
+        
+        # Verificar si hay mensaje de success pero no redirigió
+        if 'dashboard' in response.text.lower() or 'escritorio' in response.text.lower():
+            print(f"⚠️ Posible login exitoso pero sin redirección, intentando continuar...")
+            return session
+            
+        return None
             
     except Exception as e:
         print(f"❌ Error durante login: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

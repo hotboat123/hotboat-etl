@@ -10,7 +10,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import chromedriver_autoinstaller
 
 
 def parse_date_flexible(date_str: str) -> Optional[str]:
@@ -53,11 +52,11 @@ def setup_chrome_driver():
     try:
         # Chrome options
         chrome_options = Options()
+        chrome_options.add_argument("--headless=new")  # Headless mode para Railway
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
@@ -73,11 +72,19 @@ def setup_chrome_driver():
         })
         
         print("⚙️ Inicializando Chrome driver...")
-        print("ℹ️ Usando Selenium Manager para gestión automática de drivers")
         
-        # Initialize driver - Selenium 4+ maneja automáticamente el chromedriver
-        # No necesitamos chromedriver-autoinstaller
-        driver = webdriver.Chrome(options=chrome_options)
+        # Detectar si estamos en Railway/Docker o local
+        is_railway = os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium")
+        
+        if is_railway:
+            print("🐳 Detectado entorno Railway/Docker - usando Chromium")
+            chrome_options.binary_location = "/usr/bin/chromium"
+            # En Railway no necesitamos chromedriver path, está en PATH
+            driver = webdriver.Chrome(options=chrome_options)
+        else:
+            print("💻 Detectado entorno local - usando Chrome")
+            # Selenium Manager maneja automáticamente el chromedriver
+            driver = webdriver.Chrome(options=chrome_options)
         
         # Scripts para ocultar automatización
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")

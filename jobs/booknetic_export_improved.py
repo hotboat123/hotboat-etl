@@ -10,6 +10,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 def parse_date_flexible(date_str: str) -> Optional[str]:
@@ -58,6 +60,7 @@ def setup_chrome_driver():
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--remote-debugging-port=9222")  # Ayuda en algunos casos
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
@@ -73,7 +76,7 @@ def setup_chrome_driver():
         
         print("⚙️ Inicializando Chrome driver...")
         
-        # Detectar si estamos en Railway/Docker o local
+        # Detectar si estamos en Railway/Docker o local (Windows/Mac/Linux)
         is_railway = os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium")
         
         if is_railway:
@@ -82,9 +85,10 @@ def setup_chrome_driver():
             # En Railway no necesitamos chromedriver path, está en PATH
             driver = webdriver.Chrome(options=chrome_options)
         else:
-            print("💻 Detectado entorno local - usando Chrome")
-            # Selenium Manager maneja automáticamente el chromedriver
-            driver = webdriver.Chrome(options=chrome_options)
+            print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
+            # Usar webdriver-manager para instalar automáticamente el chromedriver correcto
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
         
         # Scripts para ocultar automatización
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -95,8 +99,11 @@ def setup_chrome_driver():
     except Exception as e:
         print(f"❌ Error setting up Chrome driver: {e}")
         print("\nℹ️ Soluciones posibles:")
-        print("1. Actualiza Chrome a la última versión: https://www.google.com/chrome/")
-        print("2. O ejecuta: pip install --upgrade selenium")
+        print("1. Instala/Actualiza Chrome: https://www.google.com/chrome/")
+        print("2. Ejecuta: pip install --upgrade selenium webdriver-manager")
+        print("3. Si el error persiste, cierra todas las instancias de Chrome y vuelve a intentar")
+        import traceback
+        traceback.print_exc()
         return None
 
 def login_wordpress(driver, username, password):

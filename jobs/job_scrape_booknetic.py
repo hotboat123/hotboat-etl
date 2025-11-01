@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Tuple
 
 import requests
 
-from db.utils import upsert_many
+from db.utils import replace_all
 
 
 def _try_plugin(module_path: str):
@@ -104,7 +104,7 @@ def run() -> int:
 
     affected = 0
 
-    # Upsert appointments
+    # Replace appointments (TRUNCATE + INSERT)
     if appts:
         # Asegura id estable si falta utilizando hash
         for it in appts:
@@ -112,52 +112,42 @@ def run() -> int:
                 raw = f"{it.get('customer_email','')}|{it.get('starts_at','')}|{it.get('service_name','')}"
                 it["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         
-        affected += upsert_many(
+        print(f"[booknetic] Replacing booknetic_appointments table...")
+        affected += replace_all(
             table="booknetic_appointments",
-            rows=appts,
-            conflict_columns=["id"],
-            update_columns=[
-                "customer_name",
-                "customer_email",
-                "service_name",
-                "starts_at",
-                "status",
-                "raw",
-            ],
+            rows=appts
         )
-        print(f"[booknetic] {affected} appointments upserted")
+        print(f"[booknetic] {affected} appointments replaced")
 
-    # Upsert customers if provided
+    # Replace customers if provided (TRUNCATE + INSERT)
     if customers:
         for c in customers:
             if not c.get("id"):
                 raw = f"{c.get('email','')}|{c.get('name','')}|{c.get('phone','')}"
                 c["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         
-        customer_affected = upsert_many(
+        print(f"[booknetic] Replacing booknetic_customers table...")
+        customer_affected = replace_all(
             table="booknetic_customers",
-            rows=customers,
-            conflict_columns=["id"],
-            update_columns=["name", "email", "phone", "status", "raw"],
+            rows=customers
         )
         affected += customer_affected
-        print(f"[booknetic] {customer_affected} customers upserted")
+        print(f"[booknetic] {customer_affected} customers replaced")
 
-    # Upsert payments if any
+    # Replace payments if any (TRUNCATE + INSERT)
     if payments:
         for p in payments:
             if not p.get("id"):
                 raw = f"{p.get('appointment_id','')}|{p.get('amount','')}|{p.get('paid_at','')}"
                 p["id"] = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
         
-        payment_affected = upsert_many(
+        print(f"[booknetic] Replacing booknetic_payments table...")
+        payment_affected = replace_all(
             table="booknetic_payments",
-            rows=payments,
-            conflict_columns=["id"],
-            update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"],
+            rows=payments
         )
         affected += payment_affected
-        print(f"[booknetic] {payment_affected} payments upserted")
+        print(f"[booknetic] {payment_affected} payments replaced")
 
     print(f"[booknetic] Total affected: {affected}")
     return affected

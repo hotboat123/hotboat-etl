@@ -482,11 +482,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
     
     try:
         # Import DB functions only if needed
-        from db.utils import upsert_many
+        from db.utils import replace_all
         
         print()
         print("=" * 60)
-        print("📤 Cargando datos a PostgreSQL...")
+        print("📤 REEMPLAZANDO datos en PostgreSQL (TRUNCATE + INSERT)...")
+        print("=" * 60)
+        print("⚠️  ATENCIÓN: Las tablas serán vaciadas y reemplazadas completamente")
         print("=" * 60)
         print()
         
@@ -497,14 +499,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(customers_file)
             if rows:
                 mapped = map_customers_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_customers...")
+                affected = replace_all(
                     table="booknetic_customers",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["name", "email", "phone", "status", "raw"]
+                    rows=mapped
                 )
                 results["customers"] = affected
-                print(f"✅ {affected} customers insertados/actualizados\n")
+                print(f"   ✅ {affected} customers reemplazados\n")
         
         # 2. Load Appointments
         appointments_file = find_latest_csv(downloads_dir, "appointments_*.csv")
@@ -513,14 +514,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(appointments_file)
             if rows:
                 mapped = map_appointments_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_appointments...")
+                affected = replace_all(
                     table="booknetic_appointments",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["customer_name", "customer_email", "service_name", "starts_at", "status", "raw"]
+                    rows=mapped
                 )
                 results["appointments"] = affected
-                print(f"✅ {affected} appointments insertados/actualizados\n")
+                print(f"   ✅ {affected} appointments reemplazados\n")
         
         # 3. Load Payments
         payments_file = find_latest_csv(downloads_dir, "payments_*.csv")
@@ -529,14 +529,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(payments_file)
             if rows:
                 mapped = map_payments_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_payments...")
+                affected = replace_all(
                     table="booknetic_payments",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"]
+                    rows=mapped
                 )
                 results["payments"] = affected
-                print(f"✅ {affected} payments insertados/actualizados\n")
+                print(f"   ✅ {affected} payments reemplazados\n")
         
         print("=" * 60)
         print("✅ Carga a base de datos completada")

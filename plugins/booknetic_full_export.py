@@ -59,52 +59,75 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
             if not navigate_to_booknetic(driver):
                 raise RuntimeError("Failed to navigate to Booknetic")
             
-            # Export all data
+            # Export all data - ahora con verificación de descarga
             print("[booknetic_full_export] Exportando customers...")
-            export_customers_data(driver)
+            customers_success = export_customers_data(driver)
+            if customers_success:
+                print("[booknetic_full_export] ✅ Customers descargado correctamente")
+            else:
+                print("[booknetic_full_export] ⚠️  Advertencia: no se verificó la descarga de customers")
             time.sleep(2)
             
             print("[booknetic_full_export] Exportando appointments...")
-            export_appointments_data(driver)
+            appointments_success = export_appointments_data(driver)
+            if appointments_success:
+                print("[booknetic_full_export] ✅ Appointments descargado correctamente")
+            else:
+                print("[booknetic_full_export] ⚠️  Advertencia: no se verificó la descarga de appointments")
             time.sleep(2)
             
             print("[booknetic_full_export] Exportando payments...")
-            export_payments_data(driver)
+            payments_success = export_payments_data(driver)
+            if payments_success:
+                print("[booknetic_full_export] ✅ Payments descargado correctamente")
+            else:
+                print("[booknetic_full_export] ⚠️  Advertencia: no se verificó la descarga de payments")
             time.sleep(2)
             
         finally:
             driver.quit()
         
-        # Wait for downloads to complete
-        time.sleep(3)
+        # Wait a bit more for downloads to complete (especialmente en Railway/headless)
+        print("[booknetic_full_export] Esperando que terminen todas las descargas...")
+        time.sleep(5)  # Aumentado de 3 a 5 segundos
         
-        # Parse downloaded CSVs
+        # Parse downloaded CSVs - usar archivos MÁS RECIENTES
         print("[booknetic_full_export] Procesando archivos CSV...")
+        print(f"[booknetic_full_export] Buscando archivos en: {downloads_dir.absolute()}")
         
         customers = []
         appointments = []
         payments = []
         
-        # Load customers
+        # Load customers - usar el archivo MÁS RECIENTE
         customers_file = find_latest_csv(downloads_dir, "customers_*.csv")
         if customers_file:
+            print(f"[booknetic_full_export] Usando archivo customers: {customers_file.name}")
             rows = parse_csv_file(customers_file)
             customers = map_customers_to_db(rows)
-            print(f"[booknetic_full_export] {len(customers)} customers procesados")
+            print(f"[booknetic_full_export] ✅ {len(customers)} customers procesados")
+        else:
+            print("[booknetic_full_export] ⚠️  No se encontró archivo de customers")
         
-        # Load appointments
+        # Load appointments - usar el archivo MÁS RECIENTE
         appointments_file = find_latest_csv(downloads_dir, "appointments_*.csv")
         if appointments_file:
+            print(f"[booknetic_full_export] Usando archivo appointments: {appointments_file.name}")
             rows = parse_csv_file(appointments_file)
             appointments = map_appointments_to_db(rows)
-            print(f"[booknetic_full_export] {len(appointments)} appointments procesados")
+            print(f"[booknetic_full_export] ✅ {len(appointments)} appointments procesados")
+        else:
+            print("[booknetic_full_export] ⚠️  No se encontró archivo de appointments")
         
-        # Load payments
+        # Load payments - usar el archivo MÁS RECIENTE
         payments_file = find_latest_csv(downloads_dir, "payments_*.csv")
         if payments_file:
+            print(f"[booknetic_full_export] Usando archivo payments: {payments_file.name}")
             rows = parse_csv_file(payments_file)
             payments = map_payments_to_db(rows)
-            print(f"[booknetic_full_export] {len(payments)} payments procesados")
+            print(f"[booknetic_full_export] ✅ {len(payments)} payments procesados")
+        else:
+            print("[booknetic_full_export] ⚠️  No se encontró archivo de payments")
         
         print(f"[booknetic_full_export] Total exportado: {len(customers)} customers, {len(appointments)} appointments, {len(payments)} payments")
         

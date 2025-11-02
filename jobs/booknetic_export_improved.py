@@ -54,7 +54,10 @@ def setup_chrome_driver():
     try:
         # Chrome options
         chrome_options = Options()
-        chrome_options.add_argument("--headless=new")  # Headless mode para Railway
+        # Headless mode SOLO si no estamos en modo debug local
+        # En Railway se activa automáticamente después
+        if os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium"):
+            chrome_options.add_argument("--headless=new")  # Headless mode para Railway
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
@@ -83,6 +86,9 @@ def setup_chrome_driver():
             print("🐳 Detectado entorno Railway/Docker - usando Chromium")
             chrome_options.binary_location = "/usr/bin/chromium"
             # En Railway no necesitamos chromedriver path, está en PATH
+            # IMPORTANTE: En Railway debe estar en modo headless
+            if "--headless" not in str(chrome_options.arguments):
+                chrome_options.add_argument("--headless=new")
             driver = webdriver.Chrome(options=chrome_options)
         else:
             print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
@@ -239,50 +245,45 @@ def export_data_generic(driver, module_name, module_display_name):
         # Wait for the page to load
         wait = WebDriverWait(driver, 20)  # Aumentado de 15 a 20
         
-        # Intentar URL directa PRIMERO (más confiable)
-        print(f"🔍 Método 1: Intentando URL directa de export...")
-        export_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}&action=export"
+        # NO usar URL directa - usar el botón de la interfaz
+        print(f"🔍 Buscando botón de export en la página...")
+        time.sleep(3)
+        
+        # Buscar botón de export CSV - ACTUALIZADO con el selector correcto
+        # Primero intentar con el selector específico de Booknetic
+        export_button = None
         
         try:
-            driver.get(export_url)
-            time.sleep(5)
-            print(f"✅ URL directa accedida: {export_url}")
-            print(f"📥 Esperando descarga de {module_display_name}...")
-            time.sleep(3)
-            return True
-        except Exception as e:
-            print(f"⚠️ URL directa falló: {e}")
+            export_button = driver.find_element(By.CSS_SELECTOR, "button.export_csv")
+            if export_button and export_button.is_displayed():
+                print(f"✅ Botón encontrado con selector: button.export_csv")
+                print(f"   Texto del botón: '{export_button.text}'")
+        except:
+            pass
         
-        # Si URL directa falló, volver a la página del módulo
-        print(f"🔍 Método 2: Buscando botón de export en la página...")
-        driver.get(module_url)
-        time.sleep(5)
-        
-        # Buscar botón de export CSV
-        possible_selectors = [
-            "button[data-action='export']",
-            ".btn-export",
-            "[data-toggle='export']",
-            "button.export-csv",
-            "a.export-csv",
-            "*[data-action*='export']",
-            "*[class*='export']",
-            "button[onclick*='export']",
-            ".fs-export-btn"
-        ]
-        
-        export_button = None
-        for selector in possible_selectors:
-            try:
-                export_button = driver.find_element(By.CSS_SELECTOR, selector)
-                if export_button and export_button.is_displayed():
-                    print(f"✅ Botón encontrado con selector: {selector}")
-                    print(f"   Texto del botón: '{export_button.text}'")
-                    break
-                else:
-                    export_button = None
-            except:
-                continue
+        # Si no encontró el botón, probar con otros selectores
+        if not export_button:
+            possible_selectors = [
+                "button[data-action='export']",
+                ".btn-export",
+                "[data-toggle='export']",
+                "button.export-csv",
+                "a.export-csv",
+                "button[onclick*='export']",
+                ".fs-export-btn"
+            ]
+            
+            for selector in possible_selectors:
+                try:
+                    export_button = driver.find_element(By.CSS_SELECTOR, selector)
+                    if export_button and export_button.is_displayed():
+                        print(f"✅ Botón encontrado con selector: {selector}")
+                        print(f"   Texto del botón: '{export_button.text}'")
+                        break
+                    else:
+                        export_button = None
+                except:
+                    continue
         
         if not export_button:
             # Buscar por texto
@@ -310,16 +311,58 @@ def export_data_generic(driver, module_name, module_display_name):
                 driver.execute_script("arguments[0].click();", export_button)
                 print("✅ Click realizado con JavaScript")
             except:
-                export_button.click()
-                print("✅ Click realizado normal")
+                try:
+                    export_button.click()
+                    print("✅ Click realizado normal")
+                except Exception as e:
+                    print(f"⚠️ Error haciendo click: {e}")
+                    return False
             
-            time.sleep(5)
-            print(f"📥 Descarga de {module_display_name} completada")
-            return True
+            # Esperar más tiempo para la descarga (especialmente en headless)
+            print(f"⏳ Esperando descarga de {module_display_name}...")
+            
+            # Verificar que realmente se descargó el archivo
+            downloads_path = Path(os.getcwd()) / "downloads"
+            archivos_antes = set(downloads_path.glob(f"{module_name}*.csv"))
+            tiempo_antes = time.time()
+            
+            archivo_descargado = None
+            for i in range(20):  # Esperar hasta 20 segundos
+                time.sleep(1)
+                
+                # Buscar archivos nuevos
+                archivos_ahora = set(downloads_path.glob(f"{module_name}*.csv"))
+                archivos_nuevos = archivos_ahora - archivos_antes
+                
+                for archivo in archivos_nuevos:
+                    tiempo_archivo = archivo.stat().st_mtime
+                    if tiempo_archivo >= tiempo_antes:
+                        archivo_descargado = archivo
+                        break
+                
+                if archivo_descargado:
+                    break
+                
+                # Verificar si está descargando (.crdownload)
+                crdownload = list(downloads_path.glob("*.crdownload"))
+                if crdownload:
+                    print(f"   [{i+1}/20] Descargando...", end='\r')
+                else:
+                    print(f"   [{i+1}/20] Esperando...", end='\r')
+            
+            print()  # Nueva línea después del \r
+            
+            if archivo_descargado:
+                print(f"✅ Archivo descargado: {archivo_descargado.name}")
+                print(f"   Ruta: {archivo_descargado.absolute()}")
+                return True
+            else:
+                print(f"⚠️  No se detectó descarga de {module_display_name} después de 20 segundos")
+                print(f"   Verifica manualmente en: {downloads_path.absolute()}")
+                return False  # Cambiar a False para que sepa que falló
         else:
-            print(f"⚠️ No se encontró botón de export")
-            print(f"ℹ️ Pero la URL directa ya descargó el archivo")
-            return True  # La URL directa ya funcionó
+            print(f"❌ No se encontró botón de export para {module_display_name}")
+            return False
         
     except Exception as e:
         print(f"❌ Error durante export de {module_display_name}: {e}")

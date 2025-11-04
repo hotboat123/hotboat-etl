@@ -51,9 +51,27 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
             raise RuntimeError("Failed to setup Chrome driver")
         
         try:
+            # Verificar que las credenciales estén configuradas
+            if not username:
+                print("[booknetic_full_export] ❌ ERROR: BOOKNETIC_USERNAME no está configurado")
+                raise RuntimeError("BOOKNETIC_USERNAME not set")
+            
+            if not password:
+                print("[booknetic_full_export] ❌ ERROR: BOOKNETIC_PASSWORD no está configurado")
+                raise RuntimeError("BOOKNETIC_PASSWORD not set")
+            
+            print(f"[booknetic_full_export] Usuario configurado: {username}")
+            
             # Login
+            print("[booknetic_full_export] Intentando login...")
             if not login_wordpress(driver, username, password):
-                raise RuntimeError("Login failed")
+                print("[booknetic_full_export] ❌ Login falló")
+                print("[booknetic_full_export] Verifica:")
+                print("  1. BOOKNETIC_USERNAME está correcto")
+                print("  2. BOOKNETIC_PASSWORD está correcto")
+                print("  3. El sitio web está accesible")
+                print("  4. No hay bloqueos de IP o CAPTCHA")
+                raise RuntimeError("Login failed - check credentials and site accessibility")
             
             # Navigate to Booknetic
             if not navigate_to_booknetic(driver):

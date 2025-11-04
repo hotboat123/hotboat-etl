@@ -209,7 +209,14 @@ def login_wordpress(driver, username, password):
         
         # Hacer click en login
         print("🔐 Haciendo login...")
-        login_button = driver.find_element(By.ID, "wp-submit")
+        try:
+            login_button = wait.until(EC.element_to_be_clickable((By.ID, "wp-submit")))
+        except:
+            # Intentar buscar por otros selectores
+            try:
+                login_button = driver.find_element(By.CSS_SELECTOR, "input[type='submit'][value*='Log']")
+            except:
+                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
         
         # Scroll y hacer visible
         driver.execute_script("arguments[0].scrollIntoView();", login_button)
@@ -218,39 +225,79 @@ def login_wordpress(driver, username, password):
         # Click usando JavaScript para evitar interceptaciones
         driver.execute_script("arguments[0].click();", login_button)
         
-        # Esperar resultado
+        # Esperar resultado - aumentar tiempo en Railway
         print("⏳ Esperando resultado...")
-        time.sleep(10)
+        time.sleep(15)  # Aumentado de 10 a 15 segundos para Railway
         
-        # Verificar resultado
-        current_url = driver.current_url
-        print(f"🔍 URL actual después de login: {current_url}")
+        # Verificar resultado - intentar múltiples veces
+        max_retries = 3
+        login_success = False
         
-        if 'wp-admin' in current_url:
-            print("🎉 ¡LOGIN EXITOSO!")
-            print(f"✅ Redirigido a: {current_url}")
+        for attempt in range(max_retries):
+            current_url = driver.current_url
+            print(f"🔍 Intento {attempt + 1}/{max_retries} - URL actual: {current_url}")
+            
+            if 'wp-admin' in current_url.lower() or 'admin.php' in current_url.lower():
+                print("🎉 ¡LOGIN EXITOSO!")
+                print(f"✅ Redirigido a: {current_url}")
+                login_success = True
+                break
+            elif attempt < max_retries - 1:
+                print(f"⏳ Esperando 5 segundos más...")
+                time.sleep(5)
+        
+        if login_success:
             return True
         else:
             print("❌ Login falló o requiere verificación adicional")
-            print("📸 Tomando captura de pantalla para debug...")
+            print(f"📄 URL final: {current_url}")
+            print(f"📄 Título de página: {driver.title}")
+            
+            # Tomar screenshot para debug (especialmente útil en Railway)
             try:
                 screenshot_path = os.path.join(os.getcwd(), "downloads", "login_failed.png")
                 driver.save_screenshot(screenshot_path)
                 print(f"📸 Captura guardada en: {screenshot_path}")
-            except:
-                pass
+            except Exception as screenshot_err:
+                print(f"⚠️ No se pudo guardar screenshot: {screenshot_err}")
             
             # Buscar mensajes de error en la página
             try:
                 error_msg = driver.find_element(By.ID, "login_error")
                 print(f"⚠️ Mensaje de error: {error_msg.text}")
             except:
-                pass
-                
+                try:
+                    # Buscar otros posibles mensajes de error
+                    error_elements = driver.find_elements(By.CSS_SELECTOR, ".error, .login-error, .message.error")
+                    if error_elements:
+                        for elem in error_elements:
+                            if elem.is_displayed():
+                                print(f"⚠️ Mensaje de error encontrado: {elem.text}")
+                except:
+                    pass
+            
+            # Verificar si las credenciales están configuradas
+            if not username or not password:
+                print("⚠️ ADVERTENCIA: Usuario o contraseña no están configurados")
+                print("   Verifica las variables de entorno:")
+                print("   - BOOKNETIC_USERNAME")
+                print("   - BOOKNETIC_PASSWORD")
+            
             return False
             
     except Exception as e:
-        print(f"Error during login: {e}")
+        print(f"❌ Error during login: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Información adicional para debug
+        print("\n🔍 Información adicional para debug:")
+        try:
+            print(f"   URL actual: {driver.current_url}")
+            print(f"   Título: {driver.title}")
+        except:
+            pass
+        
         return False
 
 def navigate_to_booknetic(driver):

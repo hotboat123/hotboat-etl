@@ -85,11 +85,60 @@ def setup_chrome_driver():
         if is_railway:
             print("🐳 Detectado entorno Railway/Docker - usando Chromium")
             chrome_options.binary_location = "/usr/bin/chromium"
-            # En Railway no necesitamos chromedriver path, está en PATH
             # IMPORTANTE: En Railway debe estar en modo headless
             if "--headless" not in str(chrome_options.arguments):
                 chrome_options.add_argument("--headless=new")
-            driver = webdriver.Chrome(options=chrome_options)
+            
+            # En Railway, buscar chromedriver en ubicaciones comunes
+            # Deshabilitar Selenium Manager completamente para evitar descargas
+            chromedriver_path = None
+            
+            # 1. Verificar variable de entorno
+            if os.getenv("CHROMEDRIVER_PATH") and os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
+                chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+            
+            # 2. Verificar ubicaciones comunes
+            if not chromedriver_path:
+                common_paths = ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver"]
+                for path in common_paths:
+                    if os.path.exists(path):
+                        chromedriver_path = path
+                        break
+            
+            # 3. Si está en Nixpacks, buscar en /nix/store
+            if not chromedriver_path and os.path.exists("/nix/store"):
+                import glob
+                nix_paths = glob.glob("/nix/store/*/bin/chromedriver")
+                if nix_paths:
+                    chromedriver_path = nix_paths[0]  # Usar el primero encontrado
+            
+            # 4. Buscar en PATH como último recurso
+            if not chromedriver_path:
+                import shutil
+                chromedriver_in_path = shutil.which("chromedriver")
+                if chromedriver_in_path:
+                    chromedriver_path = chromedriver_in_path
+            
+            if chromedriver_path:
+                print(f"✅ Usando chromedriver en: {chromedriver_path}")
+                # Crear Service con el path explícito para evitar Selenium Manager
+                service = Service(chromedriver_path)
+                # Deshabilitar Selenium Manager estableciendo la variable de entorno
+                os.environ["SE_SESSION_MANAGER"] = "false"
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            else:
+                # Fallback: intentar sin service pero deshabilitando Selenium Manager
+                print("⚠️  chromedriver no encontrado en ubicaciones comunes, intentando con PATH...")
+                # Deshabilitar Selenium Manager completamente
+                os.environ["SE_SESSION_MANAGER"] = "false"
+                os.environ["SE_SELENIUM_MANAGER"] = "false"
+                try:
+                    # Intentar sin service - debe estar en PATH
+                    driver = webdriver.Chrome(options=chrome_options)
+                except Exception as e:
+                    print(f"❌ Error al inicializar Chrome: {e}")
+                    print("💡 Solución: Verifica que chromedriver esté instalado y en PATH")
+                    raise
         else:
             print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
             # Usar webdriver-manager para instalar automáticamente el chromedriver correcto
@@ -523,16 +572,63 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
         print("⚠️ Database disabled, skipping upload")
         return results
     
+    # Verificar DATABASE_URL primero
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        print()
+        print("=" * 60)
+        print("❌ ERROR: DATABASE_URL NO ESTÁ CONFIGURADO")
+        print("=" * 60)
+        print()
+        print("Para cargar datos a PostgreSQL, necesitas configurar DATABASE_URL:")
+        print()
+        print("Opción 1: Variable de entorno")
+        print("  Windows PowerShell:")
+        print('    $env:DATABASE_URL="postgresql://user:pass@host:port/db"')
+        print()
+        print("  Windows CMD:")
+        print('    set DATABASE_URL=postgresql://user:pass@host:port/db')
+        print()
+        print("  Linux/Mac:")
+        print('    export DATABASE_URL="postgresql://user:pass@host:port/db"')
+        print()
+        print("Opción 2: Usar test_with_railway.py que lo configura automáticamente")
+        print("  python test_with_railway.py")
+        print()
+        print("=" * 60)
+        return results
+    
     try:
         # Import DB functions only if needed
         from db.utils import replace_all
+        from db.connection import get_connection
         
+        # Verificar conexión antes de continuar
         print()
         print("=" * 60)
         print("📤 REEMPLAZANDO datos en PostgreSQL (TRUNCATE + INSERT)...")
         print("=" * 60)
         print("⚠️  ATENCIÓN: Las tablas serán vaciadas y reemplazadas completamente")
         print("=" * 60)
+        print()
+        print("🔍 Verificando conexión a PostgreSQL...")
+        
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT current_database()")
+                    db_name = cur.fetchone()[0]
+                    print(f"✅ Conectado a: {db_name}")
+        except Exception as conn_error:
+            print(f"❌ Error conectando a PostgreSQL: {conn_error}")
+            print()
+            print("Verifica que:")
+            print("  1. DATABASE_URL esté correcto")
+            print("  2. La base de datos esté accesible")
+            print("  3. Las credenciales sean correctas")
+            print()
+            return results
+        
         print()
         
         # 1. Load Customers
@@ -584,12 +680,31 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
         print("✅ Carga a base de datos completada")
         print("=" * 60)
         
-    except ImportError:
-        print("⚠️ No se pudo importar módulos de DB. Asegúrate de tener DATABASE_URL configurado.")
+    except ImportError as import_err:
+        print()
+        print("=" * 60)
+        print("❌ ERROR: No se pudieron importar módulos de DB")
+        print("=" * 60)
+        print(f"Error: {import_err}")
+        print()
+        print("Asegúrate de que:")
+        print("  1. DATABASE_URL esté configurado")
+        print("  2. psycopg esté instalado: pip install psycopg[binary]")
+        print("  3. Los módulos db/ estén disponibles")
+        print()
+        print("=" * 60)
     except Exception as e:
-        print(f"❌ Error cargando a base de datos: {e}")
+        print()
+        print("=" * 60)
+        print("❌ ERROR CARGANDO A BASE DE DATOS")
+        print("=" * 60)
+        print(f"Error: {e}")
+        print()
         import traceback
+        print("Traceback completo:")
         traceback.print_exc()
+        print()
+        print("=" * 60)
     
     return results
 
@@ -683,30 +798,52 @@ def main():
             print("\n⏳ Esperando 3 segundos para asegurar que las descargas terminen...")
             time.sleep(3)
             
-            try:
-                db_results = load_csv_to_database(Path(downloads_path), use_db=True)
-                
-                # Final summary
+            # Verificar DATABASE_URL antes de intentar cargar
+            if not os.getenv("DATABASE_URL"):
                 print()
                 print("=" * 60)
-                print("📊 RESUMEN FINAL")
+                print("⚠️  DATABASE_URL NO CONFIGURADO")
                 print("=" * 60)
-                print(f"📥 CSV Exportados: {exports_completed}/3")
-                print(f"💾 Customers en DB: {db_results['customers']}")
-                print(f"💾 Appointments en DB: {db_results['appointments']}")
-                print(f"💾 Payments en DB: {db_results['payments']}")
-                total_db = sum(db_results.values())
-                print(f"💾 Total registros en DB: {total_db}")
+                print()
+                print("Los CSV se exportaron correctamente, pero no se pueden cargar a PostgreSQL")
+                print("porque DATABASE_URL no está configurado.")
+                print()
+                print("Para cargar los datos a PostgreSQL:")
+                print("  1. Configura DATABASE_URL como variable de entorno")
+                print("  2. O ejecuta: python test_with_railway.py")
+                print()
+                print("Los archivos CSV están guardados en:")
+                print(f"   📁 {downloads_path}")
+                print()
                 print("=" * 60)
-                
-                if total_db > 0:
-                    print("\n🎉 ¡Proceso completado exitosamente!")
-                else:
-                    print("\n⚠️ Los CSV se exportaron pero no se cargaron datos a la DB")
+            else:
+                try:
+                    db_results = load_csv_to_database(Path(downloads_path), use_db=True)
                     
-            except Exception as e:
-                print(f"\n⚠️ Error al cargar a base de datos: {e}")
-                print("✅ Los CSV se exportaron correctamente en la carpeta downloads/")
+                    # Final summary
+                    print()
+                    print("=" * 60)
+                    print("📊 RESUMEN FINAL")
+                    print("=" * 60)
+                    print(f"📥 CSV Exportados: {exports_completed}/3")
+                    print(f"💾 Customers en DB: {db_results['customers']}")
+                    print(f"💾 Appointments en DB: {db_results['appointments']}")
+                    print(f"💾 Payments en DB: {db_results['payments']}")
+                    total_db = sum(db_results.values())
+                    print(f"💾 Total registros en DB: {total_db}")
+                    print("=" * 60)
+                    
+                    if total_db > 0:
+                        print("\n🎉 ¡Proceso completado exitosamente!")
+                    else:
+                        print("\n⚠️ Los CSV se exportaron pero no se cargaron datos a la DB")
+                        print("   Revisa los mensajes de error anteriores para más detalles")
+                        
+                except Exception as e:
+                    print(f"\n⚠️ Error al cargar a base de datos: {e}")
+                    print("✅ Los CSV se exportaron correctamente en la carpeta downloads/")
+                    import traceback
+                    traceback.print_exc()
         elif exports_completed > 0:
             print("\n🎉 CSV exportados correctamente!")
             print("ℹ️ Carga a base de datos deshabilitada (USE_DATABASE=false)")

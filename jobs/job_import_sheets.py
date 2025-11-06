@@ -67,6 +67,58 @@ def _transform_generic(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _process_generic_worksheet(ws, worksheet_name: str, rows: List[List[Any]]) -> int:
+    """Procesa hojas genéricas (Stock, Precios Extras) leyendo todo tal cual"""
+    print(f"[sheets] Procesando hoja genérica: {worksheet_name}")
+    
+    if not rows:
+        return 0
+    
+    # Asumir que la primera fila son los encabezados
+    headers = [str(h).strip() if h else f"col_{i+1}" for i, h in enumerate(rows[0])]
+    data_rows = rows[1:] if len(rows) > 1 else []
+    
+    print(f"[sheets] Headers: {headers}")
+    print(f"[sheets] Filas de datos: {len(data_rows)}")
+    
+    # Crear registros con todos los datos
+    records: List[Dict[str, Any]] = []
+    for row_idx, row in enumerate(data_rows):
+        # Crear diccionario con todos los valores
+        record: Dict[str, Any] = {}
+        for col_idx, header in enumerate(headers):
+            value = row[col_idx] if col_idx < len(row) else None
+            if value is not None and str(value).strip():
+                record[header] = str(value).strip()
+        
+        # Solo agregar si el registro tiene al menos un campo con valor
+        if record:
+            # Generar ID basado en todos los valores del registro
+            pieces = [f"{k}={v}" for k, v in sorted(record.items())]
+            id_raw = f"{worksheet_name}||{row_idx}||{'|'.join(pieces)}"
+            record["id"] = hashlib.sha1(id_raw.encode("utf-8")).hexdigest()
+            records.append(record)
+    
+    print(f"[sheets] Registros procesados: {len(records)}")
+    
+    # Determinar tabla destino
+    target_table = "Stock" if worksheet_name == "Stock" else "Precios Extras"
+    
+    # Transformar para la base de datos
+    transformed = [_transform_generic(r) for r in records]
+    
+    # Upsert a tabla destino
+    affected = upsert_many(
+        table=target_table,
+        rows=transformed,
+        conflict_columns=["id"],
+        update_columns=["raw", "source"],
+    )
+    
+    print(f"[sheets] Filas afectadas en '{target_table}': {affected}")
+    return affected
+
+
 def _ensure_id(record: Dict[str, Any], worksheet_name: Optional[str] = None) -> None:
     if record.get("id"):
         return
@@ -110,6 +162,10 @@ def _process_worksheet(ws, worksheet_name: str) -> int:
     if not rows:
         print(f"[sheets] Worksheet '{worksheet_name}' está vacía")
         return 0
+    
+    # Para hojas genéricas (Stock, Precios Extras), leer tal cual sin mapeos complejos
+    if worksheet_name in ["Stock", "Precios Extras"]:
+        return _process_generic_worksheet(ws, worksheet_name, rows)
     
     has_header = os.getenv("SHEETS_HAS_HEADER", "1").strip().lower() in {"1", "true", "yes", "y"}
 

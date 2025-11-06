@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import os
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import gspread
@@ -66,20 +67,40 @@ def _transform_generic(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _ensure_id(record: Dict[str, Any]) -> None:
+def _ensure_id(record: Dict[str, Any], worksheet_name: Optional[str] = None) -> None:
     if record.get("id"):
         return
+    
+    # Para hojas genéricas (Stock, Precios Extras), generar ID basado en todos los campos
+    if worksheet_name in ["Stock", "Precios Extras"]:
+        # Generar ID basado en todos los campos del registro
+        pieces = [f"{k}={str(v).strip()}" for k, v in sorted(record.items()) if v]
+        if pieces:
+            fallback_raw = "|".join(pieces)
+            record["id"] = hashlib.sha1(fallback_raw.encode("utf-8")).hexdigest()
+        else:
+            # Si no hay campos, usar un UUID (no ideal pero funcional)
+            record["id"] = hashlib.sha1(str(uuid.uuid4()).encode("utf-8")).hexdigest()
+        return
+    
+    # Para otras hojas, usar la lógica original con campos específicos
     fields_csv = os.getenv("SHEETS_ID_FIELDS", "email,marca_temporal").strip()
     fields = [f.strip().lower().replace(" ", "_") for f in fields_csv.split(",") if f.strip()]
     if not fields:
+        # Si no hay campos configurados, intentar generar ID con todos los campos disponibles
+        pieces = [f"{k}={str(v).strip()}" for k, v in sorted(record.items()) if v and k != "id"]
+        if pieces:
+            fallback_raw = "|".join(pieces)
+            record["id"] = hashlib.sha1(fallback_raw.encode("utf-8")).hexdigest()
         return
     parts: List[str] = []
     for f in fields:
         v = record.get(f)
         parts.append("" if v is None else str(v))
     raw = "||".join(parts)
-    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()  # stable deterministic id
-    record["id"] = digest
+    if raw.strip():  # Solo generar ID si hay al menos un campo con valor
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()  # stable deterministic id
+        record["id"] = digest
 
 
 def _process_worksheet(ws, worksheet_name: str) -> int:
@@ -142,7 +163,7 @@ def _process_worksheet(ws, worksheet_name: str) -> int:
 
     # First: generate deterministic id from selected fields if missing
     for rec in mapped_with_aliases:
-        _ensure_id(rec)
+        _ensure_id(rec, worksheet_name)
 
     # Optional: use email as id if id is still missing
     use_email_as_id = os.getenv("SHEETS_USE_EMAIL_AS_ID", "").strip().lower() in {"1", "true", "yes", "y"}

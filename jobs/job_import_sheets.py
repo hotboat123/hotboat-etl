@@ -73,20 +73,14 @@ def _ensure_id(record: Dict[str, Any]) -> None:
     record["id"] = digest
 
 
-def run() -> int:
-    spreadsheet_id = os.getenv("SHEETS_SPREADSHEET_ID")
-    worksheet_name = os.getenv("SHEETS_WORKSHEET_NAME", "Sheet1")
-    if not spreadsheet_id:
-        raise RuntimeError("SHEETS_SPREADSHEET_ID no está definido")
-
-    gc = _get_gspread_client()
-    sh = gc.open_by_key(spreadsheet_id)
-    ws = sh.worksheet(worksheet_name)
-
-    print(f"[sheets] spreadsheet_id={spreadsheet_id} worksheet={worksheet_name}")
+def _process_worksheet(ws, worksheet_name: str) -> int:
+    """Procesa una hoja individual y retorna el número de filas afectadas"""
+    print(f"[sheets] Procesando worksheet: {worksheet_name}")
     rows = ws.get_all_values()
     if not rows:
+        print(f"[sheets] Worksheet '{worksheet_name}' está vacía")
         return 0
+    
     has_header = os.getenv("SHEETS_HAS_HEADER", "1").strip().lower() in {"1", "true", "yes", "y"}
 
     if has_header:
@@ -168,6 +162,86 @@ def run() -> int:
         conflict_columns=["id"],
         update_columns=["name", "email", "phone", "raw", "source"],
     )
+    
+    # Si estamos procesando la hoja de leads (no "Informacion Reserva"), 
+    # también copiar los datos a "Informacion Reservas"
+    if worksheet_name != "Informacion Reserva" and target_table == "leads" and transformed:
+        print(f"[sheets] Copiando datos de '{worksheet_name}' también a 'Informacion Reservas'")
+        affected_reservas = upsert_many(
+            table="Informacion Reservas",
+            rows=transformed,
+            conflict_columns=["id"],
+            update_columns=["name", "email", "phone", "raw", "source"],
+        )
+        print(f"[sheets] Filas afectadas en 'Informacion Reservas': {affected_reservas}")
+    
     return affected
+
+
+def run() -> int:
+    spreadsheet_id = os.getenv("SHEETS_SPREADSHEET_ID")
+    if not spreadsheet_id:
+        raise RuntimeError("SHEETS_SPREADSHEET_ID no está definido")
+
+    gc = _get_gspread_client()
+    sh = gc.open_by_key(spreadsheet_id)
+
+    print(f"[sheets] spreadsheet_id={spreadsheet_id}")
+    
+    # Determinar qué hojas procesar
+    # Opción 1: Variable SHEETS_WORKSHEETS (lista separada por comas)
+    worksheets_env = os.getenv("SHEETS_WORKSHEETS", "").strip()
+    if worksheets_env:
+        worksheet_names = [w.strip() for w in worksheets_env.split(",") if w.strip()]
+        print(f"[sheets] Procesando hojas desde SHEETS_WORKSHEETS: {worksheet_names}")
+    else:
+        # Opción 2: Variable SHEETS_WORKSHEET_NAME (una sola hoja, modo legacy)
+        worksheet_name = os.getenv("SHEETS_WORKSHEET_NAME", "Sheet1")
+        worksheet_names = [worksheet_name]
+        print(f"[sheets] Procesando hoja desde SHEETS_WORKSHEET_NAME: {worksheet_name}")
+    
+    # Si no hay hojas configuradas, intentar procesar "Informacion Reserva" y la hoja de leads
+    if not worksheet_names or (len(worksheet_names) == 1 and worksheet_names[0] == "Sheet1"):
+        # Intentar encontrar hojas comunes
+        all_worksheets = [ws.title for ws in sh.worksheets()]
+        print(f"[sheets] Hojas disponibles en el spreadsheet: {all_worksheets}")
+        
+        worksheet_names = []
+        # Buscar "Informacion Reserva"
+        if "Informacion Reserva" in all_worksheets:
+            worksheet_names.append("Informacion Reserva")
+        # Buscar hoja de leads (puede tener varios nombres comunes)
+        leads_sheet_names = [name for name in all_worksheets if name.lower() in ["leads", "lead", "formulario", "contactos"]]
+        if leads_sheet_names:
+            worksheet_names.extend(leads_sheet_names[:1])  # Solo la primera encontrada
+        
+        if not worksheet_names:
+            # Fallback: usar la primera hoja
+            worksheet_names = [all_worksheets[0]] if all_worksheets else ["Sheet1"]
+        
+        print(f"[sheets] Hojas a procesar (auto-detectadas): {worksheet_names}")
+
+    total_affected = 0
+    
+    # Procesar cada hoja
+    for worksheet_name in worksheet_names:
+        try:
+            print(f"\n{'='*60}")
+            print(f"[sheets] Procesando hoja: {worksheet_name}")
+            print(f"{'='*60}")
+            
+            ws = sh.worksheet(worksheet_name)
+            affected = _process_worksheet(ws, worksheet_name)
+            total_affected += affected
+            print(f"[sheets] ✅ Hoja '{worksheet_name}' procesada: {affected} filas afectadas")
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"[sheets] ⚠️ Hoja '{worksheet_name}' no encontrada, saltando...")
+        except Exception as e:
+            print(f"[sheets] ❌ Error procesando hoja '{worksheet_name}': {e}")
+            import traceback
+            traceback.print_exc()
+    
+    print(f"\n[sheets] ✅ Total de filas procesadas: {total_affected}")
+    return total_affected
 
 

@@ -170,8 +170,8 @@ def _process_worksheet(ws, worksheet_name: str) -> int:
         transform_func = _transform_generic
         update_columns = ["raw", "source"]
     else:
-        # Hojas de leads (por defecto)
-        target_table = "leads"
+        # Todas las demás hojas van a "Informacion Reservas"
+        target_table = "Informacion Reservas"
         transform_func = _transform
         update_columns = ["name", "email", "phone", "raw", "source"]
     
@@ -187,20 +187,6 @@ def _process_worksheet(ws, worksheet_name: str) -> int:
         conflict_columns=["id"],
         update_columns=update_columns,
     )
-    
-    # Si estamos procesando la hoja de leads (no "Informacion Reserva", "Stock" ni "Precios Extras"), 
-    # también copiar los datos a "Informacion Reservas"
-    if worksheet_name not in ["Informacion Reserva", "Stock", "Precios Extras"] and target_table == "leads" and transformed:
-        print(f"[sheets] Copiando datos de '{worksheet_name}' también a 'Informacion Reservas'")
-        # Para copiar a Informacion Reservas, necesitamos usar _transform
-        transformed_reservas = [_transform(m) for m in mapped_with_aliases if m.get("id")]
-        affected_reservas = upsert_many(
-            table="Informacion Reservas",
-            rows=transformed_reservas,
-            conflict_columns=["id"],
-            update_columns=["name", "email", "phone", "raw", "source"],
-        )
-        print(f"[sheets] Filas afectadas en 'Informacion Reservas': {affected_reservas}")
     
     return affected
 

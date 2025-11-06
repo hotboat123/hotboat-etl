@@ -1,8 +1,8 @@
 # Usar imagen base de Python con Chromium
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim-bookworm
 
-# Instalar dependencias del sistema para Chromium y Selenium
-RUN apt-get update && apt-get install -y \
+# Actualizar repositorios e instalar dependencias del sistema para Chromium y Selenium
+RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
     wget \

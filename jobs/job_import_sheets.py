@@ -278,6 +278,10 @@ def run() -> int:
 
     print(f"[sheets] spreadsheet_id={spreadsheet_id}")
     
+    # Obtener todas las hojas disponibles
+    all_worksheets = [ws.title for ws in sh.worksheets()]
+    print(f"[sheets] Hojas disponibles en el spreadsheet: {all_worksheets}")
+    
     # Determinar qué hojas procesar
     # Opción 1: Variable SHEETS_WORKSHEETS (lista separada por comas)
     worksheets_env = os.getenv("SHEETS_WORKSHEETS", "").strip()
@@ -290,22 +294,21 @@ def run() -> int:
         worksheet_names = [worksheet_name]
         print(f"[sheets] Procesando hoja desde SHEETS_WORKSHEET_NAME: {worksheet_name}")
     
-    # Si no hay hojas configuradas, intentar procesar hojas comunes
+    # SIEMPRE agregar Stock y Precios Extras si existen (además de las configuradas)
+    # Esto asegura que estas hojas se procesen siempre
+    if "Stock" in all_worksheets and "Stock" not in worksheet_names:
+        worksheet_names.append("Stock")
+        print(f"[sheets] Agregando hoja 'Stock' a la lista de procesamiento")
+    if "Precios Extras" in all_worksheets and "Precios Extras" not in worksheet_names:
+        worksheet_names.append("Precios Extras")
+        print(f"[sheets] Agregando hoja 'Precios Extras' a la lista de procesamiento")
+    
+    # Si no hay hojas configuradas o solo hay Sheet1, intentar auto-detectar
     if not worksheet_names or (len(worksheet_names) == 1 and worksheet_names[0] == "Sheet1"):
-        # Intentar encontrar hojas comunes
-        all_worksheets = [ws.title for ws in sh.worksheets()]
-        print(f"[sheets] Hojas disponibles en el spreadsheet: {all_worksheets}")
-        
         worksheet_names = []
         # Buscar "Informacion Reserva"
         if "Informacion Reserva" in all_worksheets:
             worksheet_names.append("Informacion Reserva")
-        # Buscar "Stock"
-        if "Stock" in all_worksheets:
-            worksheet_names.append("Stock")
-        # Buscar "Precios Extras"
-        if "Precios Extras" in all_worksheets:
-            worksheet_names.append("Precios Extras")
         # Buscar hoja de leads (puede tener varios nombres comunes)
         leads_sheet_names = [name for name in all_worksheets if name.lower() in ["leads", "lead", "formulario", "contactos"]]
         if leads_sheet_names:
@@ -316,6 +319,8 @@ def run() -> int:
             worksheet_names = [all_worksheets[0]] if all_worksheets else ["Sheet1"]
         
         print(f"[sheets] Hojas a procesar (auto-detectadas): {worksheet_names}")
+    
+    print(f"[sheets] Hojas finales a procesar: {worksheet_names}")
 
     total_affected = 0
     

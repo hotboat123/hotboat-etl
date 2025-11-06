@@ -57,6 +57,15 @@ def _transform(record: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _transform_generic(record: Dict[str, Any]) -> Dict[str, Any]:
+    # Transformación genérica para hojas que solo almacenan datos en raw (Stock, Precios Extras, etc.)
+    return {
+        "id": record.get("id"),
+        "raw": record,
+        "source": "sheets",
+    }
+
+
 def _ensure_id(record: Dict[str, Any]) -> None:
     if record.get("id"):
         return
@@ -147,29 +156,47 @@ def _process_worksheet(ws, worksheet_name: str) -> int:
     sample = mapped_with_aliases[:2]
     print(f"[sheets] records_with_id={has_id} records_with_email={has_email} sample_keys={[list(s.keys()) for s in sample]}")
 
-    transformed = [_transform(m) for m in mapped_with_aliases if m.get("id")]
-    print(f"[sheets] to_upsert={len(transformed)}")
-
-    # Determinar tabla destino según el nombre de la hoja
-    # Si la hoja es "Informacion Reserva", usar tabla "Informacion Reservas", sino usar "leads"
-    target_table = "Informacion Reservas" if worksheet_name == "Informacion Reserva" else "leads"
+    # Determinar tabla destino y función de transformación según el nombre de la hoja
+    if worksheet_name == "Informacion Reserva":
+        target_table = "Informacion Reservas"
+        transform_func = _transform
+        update_columns = ["name", "email", "phone", "raw", "source"]
+    elif worksheet_name == "Stock":
+        target_table = "Stock"
+        transform_func = _transform_generic
+        update_columns = ["raw", "source"]
+    elif worksheet_name == "Precios Extras":
+        target_table = "Precios Extras"
+        transform_func = _transform_generic
+        update_columns = ["raw", "source"]
+    else:
+        # Hojas de leads (por defecto)
+        target_table = "leads"
+        transform_func = _transform
+        update_columns = ["name", "email", "phone", "raw", "source"]
+    
     print(f"[sheets] target_table={target_table}")
+
+    transformed = [transform_func(m) for m in mapped_with_aliases if m.get("id")]
+    print(f"[sheets] to_upsert={len(transformed)}")
 
     # Upsert a tabla destino
     affected = upsert_many(
         table=target_table,
         rows=transformed,
         conflict_columns=["id"],
-        update_columns=["name", "email", "phone", "raw", "source"],
+        update_columns=update_columns,
     )
     
-    # Si estamos procesando la hoja de leads (no "Informacion Reserva"), 
+    # Si estamos procesando la hoja de leads (no "Informacion Reserva", "Stock" ni "Precios Extras"), 
     # también copiar los datos a "Informacion Reservas"
-    if worksheet_name != "Informacion Reserva" and target_table == "leads" and transformed:
+    if worksheet_name not in ["Informacion Reserva", "Stock", "Precios Extras"] and target_table == "leads" and transformed:
         print(f"[sheets] Copiando datos de '{worksheet_name}' también a 'Informacion Reservas'")
+        # Para copiar a Informacion Reservas, necesitamos usar _transform
+        transformed_reservas = [_transform(m) for m in mapped_with_aliases if m.get("id")]
         affected_reservas = upsert_many(
             table="Informacion Reservas",
-            rows=transformed,
+            rows=transformed_reservas,
             conflict_columns=["id"],
             update_columns=["name", "email", "phone", "raw", "source"],
         )
@@ -200,7 +227,7 @@ def run() -> int:
         worksheet_names = [worksheet_name]
         print(f"[sheets] Procesando hoja desde SHEETS_WORKSHEET_NAME: {worksheet_name}")
     
-    # Si no hay hojas configuradas, intentar procesar "Informacion Reserva" y la hoja de leads
+    # Si no hay hojas configuradas, intentar procesar hojas comunes
     if not worksheet_names or (len(worksheet_names) == 1 and worksheet_names[0] == "Sheet1"):
         # Intentar encontrar hojas comunes
         all_worksheets = [ws.title for ws in sh.worksheets()]
@@ -210,6 +237,12 @@ def run() -> int:
         # Buscar "Informacion Reserva"
         if "Informacion Reserva" in all_worksheets:
             worksheet_names.append("Informacion Reserva")
+        # Buscar "Stock"
+        if "Stock" in all_worksheets:
+            worksheet_names.append("Stock")
+        # Buscar "Precios Extras"
+        if "Precios Extras" in all_worksheets:
+            worksheet_names.append("Precios Extras")
         # Buscar hoja de leads (puede tener varios nombres comunes)
         leads_sheet_names = [name for name in all_worksheets if name.lower() in ["leads", "lead", "formulario", "contactos"]]
         if leads_sheet_names:

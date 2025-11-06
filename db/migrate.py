@@ -147,6 +147,42 @@ def ensure_schema() -> None:
         before update on booknetic_payments
         for each row execute procedure set_updated_at();
         """,
+        # Stock table + trigger
+        """
+        create table if not exists "Stock" (
+            id text primary key,
+            raw jsonb,
+            source text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_stock_updated_at on "Stock";
+        """,
+        """
+        create trigger trg_stock_updated_at
+        before update on "Stock"
+        for each row execute procedure set_updated_at();
+        """,
+        # Precios Extras table + trigger
+        """
+        create table if not exists "Precios Extras" (
+            id text primary key,
+            raw jsonb,
+            source text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_precios_extras_updated_at on "Precios Extras";
+        """,
+        """
+        create trigger trg_precios_extras_updated_at
+        before update on "Precios Extras"
+        for each row execute procedure set_updated_at();
+        """,
     ]
 
     with get_connection() as conn:

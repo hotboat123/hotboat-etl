@@ -55,6 +55,32 @@ def ensure_schema() -> None:
         before update on leads
         for each row execute procedure set_updated_at();
         """,
+        # Informacion Reservas table + trigger
+        """
+        create table if not exists "Informacion Reservas" (
+            id text primary key,
+            name text,
+            email text,
+            phone text,
+            raw jsonb,
+            source text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        # Ensure new columns exist on already-created tables
+        """
+        alter table if exists "Informacion Reservas"
+        add column if not exists raw jsonb;
+        """,
+        """
+        drop trigger if exists trg_informacion_reservas_updated_at on "Informacion Reservas";
+        """,
+        """
+        create trigger trg_informacion_reservas_updated_at
+        before update on "Informacion Reservas"
+        for each row execute procedure set_updated_at();
+        """,
         # booknetic_appointments + trigger
         """
         create table if not exists booknetic_appointments (

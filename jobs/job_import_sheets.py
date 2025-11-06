@@ -156,9 +156,14 @@ def run() -> int:
     transformed = [_transform(m) for m in mapped_with_aliases if m.get("id")]
     print(f"[sheets] to_upsert={len(transformed)}")
 
+    # Determinar tabla destino según el nombre de la hoja
+    # Si la hoja es "Informacion Reserva", usar tabla "Informacion Reservas", sino usar "leads"
+    target_table = "Informacion Reservas" if worksheet_name == "Informacion Reserva" else "leads"
+    print(f"[sheets] target_table={target_table}")
+
     # Upsert a tabla destino
     affected = upsert_many(
-        table="leads",
+        table=target_table,
         rows=transformed,
         conflict_columns=["id"],
         update_columns=["name", "email", "phone", "raw", "source"],

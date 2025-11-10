@@ -50,116 +50,156 @@ def parse_date_flexible(date_str: str) -> Optional[str]:
     return None
 
 def setup_chrome_driver():
-    """Setup Chrome driver with automatic chromedriver installation"""
-    try:
-        # Chrome options
-        chrome_options = Options()
-        # Headless mode SOLO si no estamos en modo debug local
-        # En Railway se activa automáticamente después
-        if os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium"):
-            chrome_options.add_argument("--headless=new")  # Headless mode para Railway
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--remote-debugging-port=9222")  # Ayuda en algunos casos
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # Configurar directorio de descargas
-        downloads_dir = os.path.join(os.getcwd(), "downloads")
-        os.makedirs(downloads_dir, exist_ok=True)
-        
-        chrome_options.add_experimental_option("prefs", {
-            "download.default_directory": downloads_dir,
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-        })
-        
-        print("⚙️ Inicializando Chrome driver...")
-        
-        # Detectar si estamos en Railway/Docker o local (Windows/Mac/Linux)
-        is_railway = os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium")
-        
-        if is_railway:
-            print("🐳 Detectado entorno Railway/Docker - usando Chromium")
-            chrome_options.binary_location = "/usr/bin/chromium"
-            # IMPORTANTE: En Railway debe estar en modo headless
-            if "--headless" not in str(chrome_options.arguments):
-                chrome_options.add_argument("--headless=new")
+    """Setup Chrome driver with automatic chromedriver installation and retry logic"""
+    max_attempts = 3
+    last_error = None
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print(f"⚙️ Inicializando Chrome driver (intento {attempt}/{max_attempts})...")
             
-            # En Railway, buscar chromedriver en ubicaciones comunes
-            # Deshabilitar Selenium Manager completamente para evitar descargas
-            chromedriver_path = None
+            # Chrome options
+            chrome_options = Options()
+            # Headless mode SOLO si no estamos en modo debug local
+            # En Railway se activa automáticamente después
+            if os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium"):
+                chrome_options.add_argument("--headless=new")  # Headless mode para Railway
             
-            # 1. Verificar variable de entorno
-            if os.getenv("CHROMEDRIVER_PATH") and os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
-                chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+            # Opciones básicas de estabilidad
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
             
-            # 2. Verificar ubicaciones comunes
-            if not chromedriver_path:
-                common_paths = ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver"]
-                for path in common_paths:
-                    if os.path.exists(path):
-                        chromedriver_path = path
-                        break
+            # Opciones adicionales para Railway/Docker
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-dev-tools")
+            chrome_options.add_argument("--disable-setuid-sandbox")
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+            chrome_options.add_argument("--single-process")  # Importante para entornos con poca memoria
+            chrome_options.add_argument("--no-zygote")  # Importante para Docker
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument("--disable-background-networking")
+            chrome_options.add_argument("--disable-default-apps")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--metrics-recording-only")
+            chrome_options.add_argument("--mute-audio")
+            chrome_options.add_argument("--no-first-run")
+            chrome_options.add_argument("--safebrowsing-disable-auto-update")
+            chrome_options.add_argument("--disable-crash-reporter")
             
-            # 3. Si está en Nixpacks, buscar en /nix/store
-            if not chromedriver_path and os.path.exists("/nix/store"):
-                import glob
-                nix_paths = glob.glob("/nix/store/*/bin/chromedriver")
-                if nix_paths:
-                    chromedriver_path = nix_paths[0]  # Usar el primero encontrado
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
             
-            # 4. Buscar en PATH como último recurso
-            if not chromedriver_path:
-                import shutil
-                chromedriver_in_path = shutil.which("chromedriver")
-                if chromedriver_in_path:
-                    chromedriver_path = chromedriver_in_path
+            # Configurar directorio de descargas
+            downloads_dir = os.path.join(os.getcwd(), "downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
             
-            if chromedriver_path:
-                print(f"✅ Usando chromedriver en: {chromedriver_path}")
-                # Crear Service con el path explícito para evitar Selenium Manager
-                service = Service(chromedriver_path)
-                # Deshabilitar Selenium Manager estableciendo la variable de entorno
-                os.environ["SE_SESSION_MANAGER"] = "false"
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-            else:
-                # Fallback: intentar sin service pero deshabilitando Selenium Manager
-                print("⚠️  chromedriver no encontrado en ubicaciones comunes, intentando con PATH...")
-                # Deshabilitar Selenium Manager completamente
-                os.environ["SE_SESSION_MANAGER"] = "false"
-                os.environ["SE_SELENIUM_MANAGER"] = "false"
-                try:
+            chrome_options.add_experimental_option("prefs", {
+                "download.default_directory": downloads_dir,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+            })
+            
+            # Detectar si estamos en Railway/Docker o local (Windows/Mac/Linux)
+            is_railway = os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium")
+            
+            if is_railway:
+                print("🐳 Detectado entorno Railway/Docker - usando Chromium")
+                chrome_options.binary_location = "/usr/bin/chromium"
+                # IMPORTANTE: En Railway debe estar en modo headless
+                if "--headless" not in str(chrome_options.arguments):
+                    chrome_options.add_argument("--headless=new")
+                
+                # En Railway, buscar chromedriver en ubicaciones comunes
+                # Deshabilitar Selenium Manager completamente para evitar descargas
+                chromedriver_path = None
+                
+                # 1. Verificar variable de entorno
+                if os.getenv("CHROMEDRIVER_PATH") and os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
+                    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+                
+                # 2. Verificar ubicaciones comunes
+                if not chromedriver_path:
+                    common_paths = ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver"]
+                    for path in common_paths:
+                        if os.path.exists(path):
+                            chromedriver_path = path
+                            break
+                
+                # 3. Si está en Nixpacks, buscar en /nix/store
+                if not chromedriver_path and os.path.exists("/nix/store"):
+                    import glob
+                    nix_paths = glob.glob("/nix/store/*/bin/chromedriver")
+                    if nix_paths:
+                        chromedriver_path = nix_paths[0]  # Usar el primero encontrado
+                
+                # 4. Buscar en PATH como último recurso
+                if not chromedriver_path:
+                    import shutil
+                    chromedriver_in_path = shutil.which("chromedriver")
+                    if chromedriver_in_path:
+                        chromedriver_path = chromedriver_in_path
+                
+                if chromedriver_path:
+                    print(f"✅ Usando chromedriver en: {chromedriver_path}")
+                    # Crear Service con el path explícito para evitar Selenium Manager
+                    service = Service(chromedriver_path)
+                    # Deshabilitar Selenium Manager estableciendo la variable de entorno
+                    os.environ["SE_SESSION_MANAGER"] = "false"
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                else:
+                    # Fallback: intentar sin service pero deshabilitando Selenium Manager
+                    print("⚠️  chromedriver no encontrado en ubicaciones comunes, intentando con PATH...")
+                    # Deshabilitar Selenium Manager completamente
+                    os.environ["SE_SESSION_MANAGER"] = "false"
+                    os.environ["SE_SELENIUM_MANAGER"] = "false"
                     # Intentar sin service - debe estar en PATH
                     driver = webdriver.Chrome(options=chrome_options)
-                except Exception as e:
-                    print(f"❌ Error al inicializar Chrome: {e}")
-                    print("💡 Solución: Verifica que chromedriver esté instalado y en PATH")
-                    raise
-        else:
-            print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
-            # Usar webdriver-manager para instalar automáticamente el chromedriver correcto
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        # Scripts para ocultar automatización
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        driver.execute_script("window.navigator.chrome = {runtime: {}};")
-        
-        print("✅ Chrome driver inicializado correctamente")
-        return driver
-    except Exception as e:
-        print(f"❌ Error setting up Chrome driver: {e}")
-        print("\nℹ️ Soluciones posibles:")
-        print("1. Instala/Actualiza Chrome: https://www.google.com/chrome/")
-        print("2. Ejecuta: pip install --upgrade selenium webdriver-manager")
-        print("3. Si el error persiste, cierra todas las instancias de Chrome y vuelve a intentar")
-        import traceback
-        traceback.print_exc()
-        return None
+            else:
+                print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
+                # Usar webdriver-manager para instalar automáticamente el chromedriver correcto
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # Scripts para ocultar automatización
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            driver.execute_script("window.navigator.chrome = {runtime: {}};")
+            
+            print("✅ Chrome driver inicializado correctamente")
+            return driver
+            
+        except Exception as e:
+            last_error = e
+            print(f"❌ Error en intento {attempt}/{max_attempts}: {e}")
+            
+            if attempt < max_attempts:
+                wait_time = attempt * 5  # Esperar más tiempo en cada intento
+                print(f"⏳ Esperando {wait_time} segundos antes del próximo intento...")
+                time.sleep(wait_time)
+            else:
+                print(f"\n❌ Todos los intentos ({max_attempts}) fallaron")
+                print("\nℹ️ Soluciones posibles:")
+                print("1. Verifica que chromium y chromedriver estén instalados en Railway")
+                print("2. Revisa nixpacks.toml incluya: chromium, chromedriver")
+                print("3. Verifica memoria disponible en Railway")
+                print("4. Considera reiniciar el servicio en Railway")
+                import traceback
+                traceback.print_exc()
+                
+                # Enviar notificación de error
+                try:
+                    from utils.notifications import notify_chrome_error
+                    notify_chrome_error(last_error)
+                except Exception:
+                    pass  # Si falla la notificación, no romper el flujo
+                
+                return None
+    
+    return None
 
 def login_wordpress(driver, username, password):
     """Login to WordPress first, then navigate to Booknetic"""

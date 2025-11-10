@@ -68,10 +68,20 @@ def run_job_safely(job_name: str, job_func):
         run_with_job_meta(job_name, job_func)
         
         print(f"\n✅ Job '{job_name}' completado exitosamente\n")
+        return True
     except Exception as e:
         print(f"\n❌ Error en job '{job_name}': {e}\n")
         import traceback
         traceback.print_exc()
+        
+        # Enviar notificación de error
+        try:
+            from utils.notifications import notify_job_failure
+            notify_job_failure(job_name, e)
+        except Exception:
+            pass  # Si falla la notificación, no romper el flujo
+        
+        return False
 
 
 def main() -> None:
@@ -99,9 +109,17 @@ def main() -> None:
         print(f"   - Sheets: DESHABILITADO")
     print()
     
+    # Rastrear fallos consecutivos para notificaciones inteligentes
+    failure_tracker = {
+        "booknetic_scrape": {"consecutive_failures": 0, "last_notified": 0},
+        "sheets_import": {"consecutive_failures": 0, "last_notified": 0}
+    }
+    
     # Ejecutar Booknetic inmediatamente al inicio
     print("🔷 Ejecución inicial de Booknetic...")
-    run_job_safely("booknetic_scrape", run_booknetic)
+    success = run_job_safely("booknetic_scrape", run_booknetic)
+    if not success:
+        failure_tracker["booknetic_scrape"]["consecutive_failures"] += 1
     
     last_booknetic_run = time.time()
     last_sheets_run = time.time()
@@ -117,19 +135,49 @@ def main() -> None:
             
             # Ejecutar Booknetic si pasó el intervalo
             if current_time - last_booknetic_run >= BOOKNETIC_INTERVAL:
-                run_job_safely("booknetic_scrape", run_booknetic)
+                success = run_job_safely("booknetic_scrape", run_booknetic)
                 last_booknetic_run = current_time
+                
+                # Tracking de fallos
+                if success:
+                    # Si se recuperó después de fallos, notificar
+                    if failure_tracker["booknetic_scrape"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure("booknetic_scrape", 
+                                failure_tracker["booknetic_scrape"]["consecutive_failures"])
+                        except Exception:
+                            pass
+                    failure_tracker["booknetic_scrape"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["booknetic_scrape"]["consecutive_failures"] += 1
             
             # Ejecutar Sheets si está habilitado y pasó el intervalo
             if SHEETS_ENABLED and current_time - last_sheets_run >= SHEETS_INTERVAL:
-                run_job_safely("sheets_import", run_sheets)
+                success = run_job_safely("sheets_import", run_sheets)
                 last_sheets_run = current_time
+                
+                # Tracking de fallos
+                if success:
+                    # Si se recuperó después de fallos, notificar
+                    if failure_tracker["sheets_import"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure("sheets_import",
+                                failure_tracker["sheets_import"]["consecutive_failures"])
+                        except Exception:
+                            pass
+                    failure_tracker["sheets_import"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["sheets_import"]["consecutive_failures"] += 1
             
             # Calcular tiempo hasta próxima ejecución
             time_to_next_booknetic = BOOKNETIC_INTERVAL - (current_time - last_booknetic_run)
             next_run = dt.datetime.now() + dt.timedelta(seconds=time_to_next_booknetic)
             
-            print(f"💤 Esperando... Próxima ejecución de Booknetic: {next_run.strftime('%H:%M:%S')}")
+            # Mostrar estado de salud
+            health_status = "✅" if failure_tracker["booknetic_scrape"]["consecutive_failures"] == 0 else f"⚠️({failure_tracker['booknetic_scrape']['consecutive_failures']} fallos)"
+            print(f"💤 Esperando... Próxima ejecución de Booknetic: {next_run.strftime('%H:%M:%S')} {health_status}")
             
             # Dormir por 60 segundos (1 minuto)
             time.sleep(60)

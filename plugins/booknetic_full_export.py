@@ -159,5 +159,5 @@ def fetch() -> Dict[str, List[Dict[str, Any]]]:
         print(f"[booknetic_full_export] Error: {e}")
         import traceback
         traceback.print_exc()
-        return {"customers": [], "appointments": [], "payments": []}
+        raise RuntimeError("booknetic_full_export failed") from e
 

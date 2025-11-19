@@ -6,6 +6,9 @@ import json
 import traceback
 from datetime import datetime
 from typing import Optional
+import smtplib
+import ssl
+from email.message import EmailMessage
 import requests
 
 
@@ -60,7 +63,13 @@ def send_notification(
         except Exception as e:
             print(f"⚠️ No se pudo enviar notificación a webhook: {e}")
     
-    # 3. Guardar en base de datos (si está disponible)
+    # 3. Enviar correo si hay configuración
+    try:
+        _send_email_notification(title, full_message, level)
+    except Exception as e:
+        print(f"⚠️ No se pudo enviar notificación por email: {e}")
+    
+    # 4. Guardar en base de datos (si está disponible)
     try:
         _save_to_database(title, message, error, level)
     except Exception as e:
@@ -126,6 +135,49 @@ def _send_to_webhook(webhook_url: str, title: str, message: str, level: str) -> 
     )
     response.raise_for_status()
     print(f"✅ Notificación enviada a webhook")
+
+
+def _send_email_notification(title: str, message: str, level: str) -> None:
+    """Envía notificación por email si la configuración está disponible."""
+    host = os.getenv("NOTIFICATION_EMAIL_HOST")
+    sender = os.getenv("NOTIFICATION_EMAIL_FROM")
+    recipients_raw = os.getenv("NOTIFICATION_EMAIL_TO")
+    if not host or not sender or not recipients_raw:
+        return
+
+    recipients = [addr.strip() for addr in recipients_raw.replace(";", ",").split(",") if addr.strip()]
+    if not recipients:
+        return
+
+    subject_prefix = os.getenv("NOTIFICATION_EMAIL_SUBJECT_PREFIX", "[HotBoat ETL]")
+    subject = f"{subject_prefix} {title}".strip()
+    port = int(os.getenv("NOTIFICATION_EMAIL_PORT", "587"))
+    username = os.getenv("NOTIFICATION_EMAIL_USERNAME")
+    password = os.getenv("NOTIFICATION_EMAIL_PASSWORD")
+    use_ssl = os.getenv("NOTIFICATION_EMAIL_USE_SSL", "false").lower() in {"1", "true", "yes", "on"}
+    use_tls = os.getenv("NOTIFICATION_EMAIL_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg["X-Priority"] = "1" if level in {"critical", "error"} else "3"
+    msg.set_content(message)
+
+    context = ssl.create_default_context()
+    if use_ssl:
+        with smtplib.SMTP_SSL(host, port, context=context, timeout=15) as server:
+            if username and password:
+                server.login(username, password)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            if use_tls:
+                server.starttls(context=context)
+            if username and password:
+                server.login(username, password)
+            server.send_message(msg)
+    print("✅ Notificación enviada por email")
 
 
 def _save_to_database(

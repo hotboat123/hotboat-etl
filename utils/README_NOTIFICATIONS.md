@@ -10,6 +10,7 @@ Sistema de alertas automáticas para errores críticos en el ETL de HotBoat.
 - ✅ Notificación de recuperación después de fallos
 - ✅ Guardado de notificaciones en base de datos
 - ✅ Soporte para webhooks (Discord, Slack, etc.)
+- ✅ Soporte opcional para notificaciones vía email (SMTP)
 
 ## 🚀 Uso Básico
 
@@ -40,6 +41,24 @@ Para recibir notificaciones en Discord, Slack u otro servicio:
    ```
    NOTIFICATION_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WEBHOOK_URL
    ```
+
+## ✉️ Configuración de Email (Opcional)
+
+Para recibir alertas por correo configura las siguientes variables en Railway (o en tu `.env`):
+
+```
+NOTIFICATION_EMAIL_HOST=smtp.gmail.com
+NOTIFICATION_EMAIL_PORT=587                # Opcional (por defecto 587)
+NOTIFICATION_EMAIL_USERNAME=tu_usuario     # Opcional si el servidor no requiere auth
+NOTIFICATION_EMAIL_PASSWORD=tu_password    # Opcional
+NOTIFICATION_EMAIL_FROM=alertas@hotboat.com
+NOTIFICATION_EMAIL_TO=admin@hotboat.com,soporte@hotboat.com
+NOTIFICATION_EMAIL_USE_TLS=true            # true por defecto (usar false si el servidor no soporta TLS)
+NOTIFICATION_EMAIL_USE_SSL=false           # true para SMTPS (por ejemplo puerto 465)
+NOTIFICATION_EMAIL_SUBJECT_PREFIX=[HotBoat ETL]
+```
+
+Con que existan `NOTIFICATION_EMAIL_HOST`, `NOTIFICATION_EMAIL_FROM` y `NOTIFICATION_EMAIL_TO`, el sistema intentará enviar correos. El mensaje incluye todo el detalle del error (igual que en los logs/webhook).
 
 ## 📊 Tipos de Notificaciones
 
@@ -177,7 +196,6 @@ notify_success_after_failure(job_name, attempts)
 
 ## 🛠️ Mejoras Futuras
 
-- [ ] Soporte para email
 - [ ] Integración con Telegram
 - [ ] Dashboard web para ver notificaciones
 - [ ] Agregación de notificaciones (evitar spam)

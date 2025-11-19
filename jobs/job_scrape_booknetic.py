@@ -43,7 +43,8 @@ def _fetch_booknetic():
 
     # 2) Autodetect common plugins if env not set
     for candidate in [
-        "plugins.booknetic_full_export",  # NEW: Full export with customers, appointments, payments
+        "plugins.booknetic_full_export",  # Full export via Selenium (preferred)
+        "plugins.booknetic_http_export",  # Fallback sin navegador (usa requests)
         "plugins.booknetic_export_adapter",
         "plugins.booknetic_selenium_export",
         "plugins.booknetic_adapter_example",

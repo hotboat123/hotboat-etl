@@ -98,8 +98,8 @@ def main() -> None:
     ensure_schema()
     
     # Configuración de intervalos (en segundos)
-    BOOKNETIC_INTERVAL = int(os.getenv("BOOKNETIC_INTERVAL", "300"))  # 5 min por defecto
-    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "120"))  # 2 min por defecto
+    BOOKNETIC_INTERVAL = int(os.getenv("BOOKNETIC_INTERVAL", "1800"))  # 30 min por defecto
+    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))  # 10 min por defecto
     
     print(f"⚙️ Configuración:")
     print(f"   - Booknetic: cada {BOOKNETIC_INTERVAL//60} minutos")

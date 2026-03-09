@@ -1,6 +1,31 @@
 hotboat-etl (Railway) – Python APScheduler + Sheets + Booknetic
 
-Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railway).
+Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railway) y exporta datos procesados de vuelta a Google Sheets para análisis en Looker.
+
+## 🆕 NUEVO: Exportación Automática a Google Sheets
+
+El sistema ahora **exporta automáticamente** la tabla `Reservas_Con_Extras_Sheets` a Google Sheets cada 15 minutos para análisis en tiempo real con Looker u otras herramientas de BI.
+
+**📊 Ver Guía Rápida**: [GUIA_RAPIDA_EXPORT.md](./GUIA_RAPIDA_EXPORT.md)
+
+**URL del Spreadsheet**: https://docs.google.com/spreadsheets/d/1K8ndJSfQ_sxVwNyIio8GL9WwMtwIX2x9mCJdGGiAlsA
+
+### Características
+✅ Exportación automática cada 15 minutos (configurable)
+✅ Formato automático (headers en negrita, primera fila congelada)
+✅ 50 filas × 30 columnas con datos completos de reservas
+✅ Todas las columnas JSON aplanadas para fácil análisis
+✅ Listo para conectar con Looker
+✅ Metadatos de auditoría incluidos
+
+### Ejecución Rápida
+```bash
+# Exportar una vez (prueba)
+python demo_export.py
+
+# Ejecutar continuamente (producción)
+python jobs/runner.py
+```
 
 ## Deploy rápido
 1. Conecta el repo a Railway
@@ -10,8 +35,9 @@ Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railwa
 5. Ejecuta `sql/schema.sql` y `sql/job_meta.sql` una vez
 
 ## Cron
-- Sheets: cada 30 min (minuto 5 y 35)
-- Booknetic: cada 15 min
+- Booknetic: cada 30 min
+- Sheets Import: cada 10 min
+- **Export Reservas**: cada 15 min (NUEVO) ⭐
 
 ## Customización
 - Ajusta columnas de Sheets en `jobs/job_import_sheets.py`
@@ -26,9 +52,10 @@ Worker de ETL para HotBoat. Importa Google Sheets y Booknetic a Postgres (Railwa
 ## Estructura
 ```
 jobs/
-  runner.py
-  job_import_sheets.py
-  job_scrape_booknetic.py
+  runner.py                       # Runner principal con 3 jobs
+  job_import_sheets.py           # Import desde Google Sheets
+  job_scrape_booknetic.py        # Scraping de Booknetic
+  export_reservas_to_sheets.py   # Export a Google Sheets (NUEVO)
 db/
   connection.py
   utils.py
@@ -38,6 +65,9 @@ sql/
 requirements.txt
 .env.example
 README.md
+GUIA_RAPIDA_EXPORT.md            # Guía de exportación (NUEVO)
+EXPORT_RESERVAS_SHEETS.md        # Docs técnicas completas (NUEVO)
+demo_export.py                   # Demo de exportación (NUEVO)
 ```
 
 ## Notas

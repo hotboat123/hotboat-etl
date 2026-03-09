@@ -34,6 +34,14 @@ except Exception:
     SHEETS_ENABLED = False
     print("[runner] Google Sheets import disabled (missing config)")
 
+# Importar export de reservas a sheets
+try:
+    from jobs.export_reservas_to_sheets import run as run_export_reservas
+    EXPORT_RESERVAS_ENABLED = True
+except Exception:
+    EXPORT_RESERVAS_ENABLED = False
+    print("[runner] Export Reservas to Sheets disabled (missing config)")
+
 
 def load_env() -> None:
     """Load environment variables"""
@@ -100,6 +108,7 @@ def main() -> None:
     # Configuración de intervalos (en segundos)
     BOOKNETIC_INTERVAL = int(os.getenv("BOOKNETIC_INTERVAL", "1800"))  # 30 min por defecto
     SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))  # 10 min por defecto
+    EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900"))  # 15 min por defecto
     
     print(f"⚙️ Configuración:")
     print(f"   - Booknetic: cada {BOOKNETIC_INTERVAL//60} minutos")
@@ -107,12 +116,17 @@ def main() -> None:
         print(f"   - Sheets: cada {SHEETS_INTERVAL//60} minutos")
     else:
         print(f"   - Sheets: DESHABILITADO")
+    if EXPORT_RESERVAS_ENABLED:
+        print(f"   - Export Reservas: cada {EXPORT_RESERVAS_INTERVAL//60} minutos")
+    else:
+        print(f"   - Export Reservas: DESHABILITADO")
     print()
     
     # Rastrear fallos consecutivos para notificaciones inteligentes
     failure_tracker = {
         "booknetic_scrape": {"consecutive_failures": 0, "last_notified": 0},
-        "sheets_import": {"consecutive_failures": 0, "last_notified": 0}
+        "sheets_import": {"consecutive_failures": 0, "last_notified": 0},
+        "export_reservas_sheets": {"consecutive_failures": 0, "last_notified": 0}
     }
     
     # Ejecutar Booknetic inmediatamente al inicio
@@ -123,6 +137,7 @@ def main() -> None:
     
     last_booknetic_run = time.time()
     last_sheets_run = time.time()
+    last_export_reservas_run = time.time()
     
     print("\n" + "="*60)
     print("⏰ Loop iniciado - Esperando próximas ejecuciones...")
@@ -170,6 +185,25 @@ def main() -> None:
                     failure_tracker["sheets_import"]["consecutive_failures"] = 0
                 else:
                     failure_tracker["sheets_import"]["consecutive_failures"] += 1
+            
+            # Ejecutar Export Reservas si está habilitado y pasó el intervalo
+            if EXPORT_RESERVAS_ENABLED and current_time - last_export_reservas_run >= EXPORT_RESERVAS_INTERVAL:
+                success = run_job_safely("export_reservas_sheets", run_export_reservas)
+                last_export_reservas_run = current_time
+                
+                # Tracking de fallos
+                if success:
+                    # Si se recuperó después de fallos, notificar
+                    if failure_tracker["export_reservas_sheets"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure("export_reservas_sheets",
+                                failure_tracker["export_reservas_sheets"]["consecutive_failures"])
+                        except Exception:
+                            pass
+                    failure_tracker["export_reservas_sheets"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
             
             # Calcular tiempo hasta próxima ejecución
             time_to_next_booknetic = BOOKNETIC_INTERVAL - (current_time - last_booknetic_run)

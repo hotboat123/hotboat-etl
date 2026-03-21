@@ -40,32 +40,24 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def flatten_json_data(raw_dict: Dict[str, Any]) -> Dict[str, Any]:
+def format_value(value: Any) -> str:
     """
-    Aplana el diccionario JSON en columnas individuales.
-    Maneja extras_json como un JSON string o lo expande si es necesario.
+    Formatea un valor para Google Sheets.
     """
-    flattened = {}
-    
-    for key, value in raw_dict.items():
-        if key == 'extras_json' and isinstance(value, dict):
-            # Convertir extras_json a string JSON para Google Sheets
-            flattened['extras_json'] = json.dumps(value, ensure_ascii=False)
-        elif isinstance(value, (dict, list)):
-            # Otros objetos complejos también se convierten a JSON string
-            flattened[key] = json.dumps(value, ensure_ascii=False)
-        elif value is None:
-            flattened[key] = ""
-        else:
-            flattened[key] = str(value)
-    
-    return flattened
+    if value is None:
+        return ""
+    elif isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    elif isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    else:
+        return str(value)
 
 
 def fetch_reservas_data() -> tuple[List[str], List[List[Any]]]:
     """
     Obtiene todos los datos de la tabla Reservas_Con_Extras_Sheets
-    y los formatea para Google Sheets.
+    exactamente como están en la base de datos (sin procesar).
     
     Returns:
         tuple: (headers, rows) donde headers es lista de nombres de columnas
@@ -73,74 +65,56 @@ def fetch_reservas_data() -> tuple[List[str], List[List[Any]]]:
     """
     print("[export] Conectando a la base de datos...")
     
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            # Obtener todas las filas
-            cur.execute("""
-                SELECT id, raw, source, created_at, updated_at
-                FROM "Reservas_Con_Extras_Sheets"
-                ORDER BY id
-            """)
-            
-            db_rows = cur.fetchall()
-            print(f"[export] Filas obtenidas de la BD: {len(db_rows)}")
-    
-    if not db_rows:
-        print("[export] ATENCION: No hay datos en la tabla Reservas_Con_Extras_Sheets")
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                # Verificar si la tabla existe primero
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = 'Reservas_Con_Extras_Sheets'
+                    );
+                """)
+                table_exists = cur.fetchone()[0]
+                
+                if not table_exists:
+                    print("[export] ATENCION: La tabla 'Reservas_Con_Extras_Sheets' no existe en la base de datos")
+                    print("[export] Esta tabla solo existe en entorno local actualmente")
+                    return [], []
+                
+                # Obtener TODAS las columnas tal cual están en la BD
+                cur.execute("""
+                    SELECT *
+                    FROM "Reservas_Con_Extras_Sheets"
+                    ORDER BY id
+                """)
+                
+                db_rows = cur.fetchall()
+                
+                # Obtener nombres de columnas desde el cursor
+                headers = [desc[0] for desc in cur.description]
+                
+                print(f"[export] Filas obtenidas de la BD: {len(db_rows)}")
+                print(f"[export] Columnas: {len(headers)}")
+        
+        if not db_rows:
+            print("[export] ATENCION: No hay datos en la tabla Reservas_Con_Extras_Sheets")
+            return [], []
+        
+        # Convertir filas a formato para Google Sheets
+        rows = []
+        for db_row in db_rows:
+            row_values = [format_value(value) for value in db_row]
+            rows.append(row_values)
+        
+        print(f"[export] Filas procesadas: {len(rows)}")
+        
+        return headers, rows
+        
+    except Exception as e:
+        print(f"[export] Error al obtener datos: {e}")
         return [], []
-    
-    # Recolectar todas las claves posibles del JSON
-    all_keys = set()
-    flattened_rows = []
-    
-    for db_row in db_rows:
-        row_id, raw_json, source, created_at, updated_at = db_row
-        
-        # Aplanar el JSON
-        flattened = flatten_json_data(raw_json)
-        
-        # Agregar metadatos de la tabla
-        flattened['_db_id'] = str(row_id)
-        flattened['_source'] = source or ""
-        flattened['_created_at'] = created_at.isoformat() if created_at else ""
-        flattened['_updated_at'] = updated_at.isoformat() if updated_at else ""
-        
-        all_keys.update(flattened.keys())
-        flattened_rows.append(flattened)
-    
-    # Ordenar las claves para tener un orden consistente
-    # Priorizar campos importantes al inicio
-    priority_fields = [
-        '_db_id', 'id', 'reservation_id', 'appointment_id',
-        'fecha', 'hora', 'nombre_cliente', 'email', 'telefono',
-        'servicio', 'num_adultos', 'num_ninos', 'num_personas',
-        'ingreso_total', 'ingreso_reserva', 'ingreso_extras',
-        'costo_operativo_total', 'costo_operativo_fijo', 'costo_operativo_variable',
-        'status', 'ciudad_origen', 'como_supieron', 'tipo_clientes', 'categoria_clientes',
-        'clima_del_dia', 'tiene_cruce', 'extras_json',
-        '_source', '_created_at', '_updated_at'
-    ]
-    
-    # Crear lista ordenada de headers
-    headers = []
-    for field in priority_fields:
-        if field in all_keys:
-            headers.append(field)
-            all_keys.remove(field)
-    
-    # Agregar campos restantes alfabéticamente
-    headers.extend(sorted(all_keys))
-    
-    # Convertir filas a listas en el orden de los headers
-    rows = []
-    for flat_row in flattened_rows:
-        row_values = [flat_row.get(header, "") for header in headers]
-        rows.append(row_values)
-    
-    print(f"[export] Headers: {len(headers)} columnas")
-    print(f"[export] Filas procesadas: {len(rows)}")
-    
-    return headers, rows
 
 
 def update_google_sheet(headers: List[str], rows: List[List[Any]]):

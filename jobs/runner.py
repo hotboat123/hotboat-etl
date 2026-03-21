@@ -38,9 +38,9 @@ except Exception:
 try:
     from jobs.export_reservas_to_sheets import run as run_export_reservas
     EXPORT_RESERVAS_ENABLED = True
-except Exception:
+except Exception as e:
     EXPORT_RESERVAS_ENABLED = False
-    print("[runner] Export Reservas to Sheets disabled (missing config)")
+    print(f"[runner] Export Reservas to Sheets disabled: {e}")
 
 
 def load_env() -> None:
@@ -188,22 +188,28 @@ def main() -> None:
             
             # Ejecutar Export Reservas si está habilitado y pasó el intervalo
             if EXPORT_RESERVAS_ENABLED and current_time - last_export_reservas_run >= EXPORT_RESERVAS_INTERVAL:
-                success = run_job_safely("export_reservas_sheets", run_export_reservas)
-                last_export_reservas_run = current_time
-                
-                # Tracking de fallos
-                if success:
-                    # Si se recuperó después de fallos, notificar
-                    if failure_tracker["export_reservas_sheets"]["consecutive_failures"] >= 3:
-                        try:
-                            from utils.notifications import notify_success_after_failure
-                            notify_success_after_failure("export_reservas_sheets",
-                                failure_tracker["export_reservas_sheets"]["consecutive_failures"])
-                        except Exception:
-                            pass
-                    failure_tracker["export_reservas_sheets"]["consecutive_failures"] = 0
-                else:
+                try:
+                    success = run_job_safely("export_reservas_sheets", run_export_reservas)
+                    last_export_reservas_run = current_time
+                    
+                    # Tracking de fallos
+                    if success:
+                        # Si se recuperó después de fallos, notificar
+                        if failure_tracker["export_reservas_sheets"]["consecutive_failures"] >= 3:
+                            try:
+                                from utils.notifications import notify_success_after_failure
+                                notify_success_after_failure("export_reservas_sheets",
+                                    failure_tracker["export_reservas_sheets"]["consecutive_failures"])
+                            except Exception:
+                                pass
+                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] = 0
+                    else:
+                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
+                except Exception as e:
+                    print(f"[runner] Error ejecutando export_reservas_sheets: {e}")
+                    # Marcar como fallido pero continuar
                     failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
+                    last_export_reservas_run = current_time
             
             # Calcular tiempo hasta próxima ejecución
             time_to_next_booknetic = BOOKNETIC_INTERVAL - (current_time - last_booknetic_run)

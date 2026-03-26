@@ -54,6 +54,21 @@ def format_value(value: Any) -> str:
         return str(value)
 
 
+def parse_date_safe(value: str):
+    """Parsea fecha en formato YYYY-MM-DD; retorna None si no es válida."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # Acepta YYYY-MM-DD o timestamp iniciando con fecha
+    candidate = text[:10]
+    try:
+        return datetime.strptime(candidate, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
 def fetch_reservas_data() -> tuple[List[str], List[List[Any]]]:
     """
     Obtiene todos los datos de la tabla Reservas_Con_Extras_Sheets
@@ -119,8 +134,9 @@ def fetch_reservas_data() -> tuple[List[str], List[List[Any]]]:
 
 def update_google_sheet(headers: List[str], rows: List[List[Any]]):
     """
-    Actualiza Google Sheets con los datos de la tabla.
-    Borra el contenido anterior y escribe el nuevo.
+    Actualiza Google Sheets en modo append-only:
+    - Nunca borra histórico.
+    - Solo agrega filas nuevas por fecha/id.
     """
     spreadsheet_id = os.getenv("SHEETS_SPREADSHEET_ID")
     if not spreadsheet_id:
@@ -143,30 +159,106 @@ def update_google_sheet(headers: List[str], rows: List[List[Any]]):
             print(f"[export] Hoja '{worksheet_name}' no encontrada, creando...")
             worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=50)
         
-        # Limpiar todo el contenido anterior
-        print(f"[export] Limpiando contenido anterior...")
-        worksheet.clear()
-        
-        # Preparar datos: headers + rows
-        all_data = [headers] + rows
-        
-        print(f"[export] Escribiendo {len(rows)} filas en Google Sheets...")
-        
-        # Escribir todo de una vez (más eficiente)
-        worksheet.update(range_name='A1', values=all_data)
-        
-        # Formatear la primera fila (headers) como encabezado
-        print(f"[export] Formateando headers...")
-        worksheet.format('A1:ZZ1', {
-            "textFormat": {"bold": True},
-            "backgroundColor": {"red": 0.8, "green": 0.8, "blue": 0.8}
-        })
-        
-        # Congelar la primera fila
-        worksheet.freeze(rows=1)
-        
-        print(f"[export] OK Datos exportados exitosamente a '{worksheet_name}'")
-        print(f"[export] Total: {len(rows)} filas, {len(headers)} columnas")
+        existing_data = worksheet.get_all_values()
+
+        # Primer poblamiento: escribir todo
+        if not existing_data:
+            all_data = [headers] + rows
+            print(f"[export] Hoja vacía, escribiendo carga inicial ({len(rows)} filas)...")
+            worksheet.update(range_name="A1", values=all_data)
+
+            print("[export] Formateando headers...")
+            worksheet.format("A1:ZZ1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.8, "green": 0.8, "blue": 0.8}
+            })
+            worksheet.freeze(rows=1)
+
+            print(f"[export] OK Carga inicial completada en '{worksheet_name}'")
+            print(f"[export] Total: {len(rows)} filas, {len(headers)} columnas")
+            print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
+            return
+
+        existing_headers = existing_data[0]
+        if existing_headers != headers:
+            print("[export] ATENCION: Headers en Sheets difieren de la BD.")
+            print("[export] Se usará el orden de columnas de Sheets para append.")
+
+        # Índices en BD
+        db_idx = {name: idx for idx, name in enumerate(headers)}
+        db_fecha_idx = db_idx.get("fecha")
+        db_id_idx = db_idx.get("id")
+
+        # Índices en Sheets
+        sh_idx = {name: idx for idx, name in enumerate(existing_headers)}
+        sh_fecha_idx = sh_idx.get("fecha")
+        sh_id_idx = sh_idx.get("id")
+
+        if sh_fecha_idx is None or db_fecha_idx is None:
+            print("[export] ATENCION: No existe columna 'fecha' en Sheets o BD; no se puede aplicar filtro por fecha.")
+            return
+        if sh_id_idx is None or db_id_idx is None:
+            print("[export] ATENCION: No existe columna 'id' en Sheets o BD; no se puede deduplicar de forma segura.")
+            return
+
+        # Fecha de corte = fecha de la ultima fila con fecha válida en Google Sheets
+        cutoff_date = None
+        existing_ids = set()
+        for r in existing_data[1:]:
+            if sh_id_idx < len(r):
+                rid = r[sh_id_idx].strip()
+                if rid:
+                    existing_ids.add(rid)
+
+        for r in reversed(existing_data[1:]):
+            if sh_fecha_idx < len(r):
+                d = parse_date_safe(r[sh_fecha_idx])
+                if d:
+                    cutoff_date = d
+                    break
+
+        if cutoff_date is None:
+            print("[export] ATENCION: No se encontró fecha válida en la hoja. Para evitar duplicados no se agregará nada.")
+            print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
+            return
+
+        # Ordenar filas de BD por fecha ascendente para append consistente
+        def sort_key(db_row):
+            d = parse_date_safe(db_row[db_fecha_idx]) if db_fecha_idx < len(db_row) else None
+            return (d is None, d)
+
+        rows_sorted = sorted(rows, key=sort_key)
+        rows_to_append = []
+
+        for db_row in rows_sorted:
+            db_date = parse_date_safe(db_row[db_fecha_idx]) if db_fecha_idx < len(db_row) else None
+            db_row_id = str(db_row[db_id_idx]).strip() if db_id_idx < len(db_row) else ""
+
+            # No duplicar IDs que ya existen en Google Sheets
+            if db_row_id and db_row_id in existing_ids:
+                continue
+
+            # Regla pedida: solo agregar desde el día siguiente al último cargado
+            # (fecha estrictamente mayor al cutoff)
+            if cutoff_date is not None and db_date is not None and db_date <= cutoff_date:
+                continue
+
+            db_map = {headers[i]: db_row[i] for i in range(len(headers))}
+            new_row = [db_map.get(col, "") for col in existing_headers]
+            rows_to_append.append(new_row)
+
+        if not rows_to_append:
+            print("[export] OK No hay filas nuevas para agregar (append-only).")
+            print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
+            return
+
+        print(f"[export] Fecha de corte detectada en hoja: {cutoff_date.isoformat()}")
+        print(f"[export] Agregando {len(rows_to_append)} filas nuevas (append-only)...")
+        worksheet.append_rows(rows_to_append, value_input_option="RAW")
+
+        print(f"[export] OK Datos actualizados exitosamente en '{worksheet_name}'")
+        print(f"[export] Filas nuevas agregadas: {len(rows_to_append)}")
+        print(f"[export] Filas totales BD consultadas: {len(rows)}")
         print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
         
     except Exception as e:

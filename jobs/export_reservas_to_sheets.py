@@ -132,28 +132,18 @@ def fetch_reservas_data() -> tuple[List[str], List[List[Any]]]:
         return [], []
 
 
-def _get_or_create_ws(spreadsheet, name: str, rows: int = 1, cols: int = 2):
-    try:
-        return spreadsheet.worksheet(name)
-    except gspread.exceptions.WorksheetNotFound:
-        print(f"[export] Creando hoja '{name}'...")
-        return spreadsheet.add_worksheet(title=name, rows=rows, cols=cols)
-
-
 def update_google_sheet(headers: List[str], rows: List[List[Any]]):
     """
-    Append-only estricto:
-    - Usa una hoja de bloqueo que guarda TODOS los IDs que alguna vez se
-      sincronizaron. Un ID en bloqueo NUNCA se vuelve a insertar, aunque
-      se borre de la hoja principal.
-    - Además filtra por fecha: solo agrega filas con fecha > max_fecha_actual.
+    Append-only por fecha maxima:
+    - Calcula la fecha maxima de toda la hoja actual.
+    - Solo agrega filas de la BD cuya fecha es ESTRICTAMENTE mayor a esa fecha maxima.
+    - Nunca modifica ni borra lo que ya existe en la hoja.
     """
     spreadsheet_id = os.getenv("SHEETS_SPREADSHEET_ID")
     if not spreadsheet_id:
         raise RuntimeError("SHEETS_SPREADSHEET_ID no está definido")
 
-    worksheet_name     = os.getenv("SHEETS_EXPORT_WORKSHEET_NAME", "Reservas_Con_Extras_Sheets")
-    blocklist_name     = "__RCE_Blocklist"   # hoja interna, no tocar manualmente
+    worksheet_name = os.getenv("SHEETS_EXPORT_WORKSHEET_NAME", "Reservas_Con_Extras_Sheets")
 
     print(f"[export] Conectando a Google Sheets (ID: {spreadsheet_id})...")
 
@@ -161,40 +151,24 @@ def update_google_sheet(headers: List[str], rows: List[List[Any]]):
         gc = get_gspread_client()
         spreadsheet = gc.open_by_key(spreadsheet_id)
 
-        ws        = _get_or_create_ws(spreadsheet, worksheet_name, rows=5000, cols=50)
-        blocklist = _get_or_create_ws(spreadsheet, blocklist_name,  rows=5000, cols=1)
+        try:
+            ws = spreadsheet.worksheet(worksheet_name)
+            print(f"[export] Hoja '{worksheet_name}' encontrada")
+        except gspread.exceptions.WorksheetNotFound:
+            print(f"[export] Hoja '{worksheet_name}' no encontrada, creando...")
+            ws = spreadsheet.add_worksheet(title=worksheet_name, rows=5000, cols=50)
 
-        # --- Leer blocklist de IDs ya sincronizados ---
-        bl_data    = blocklist.get_all_values()
-        blocked_ids: set = set()
-        if bl_data:
-            start = 1 if (bl_data[0] and bl_data[0][0].strip().lower() == "id") else 0
-            for r in bl_data[start:]:
-                if r and r[0].strip():
-                    blocked_ids.add(r[0].strip())
-
-        # --- Leer hoja principal ---
         existing_data = ws.get_all_values()
 
-        # ── CARGA INICIAL (hoja vacía) ──────────────────────────────────────
+        # ── CARGA INICIAL (hoja vacia) ──────────────────────────────────────
         if not existing_data:
-            print(f"[export] Hoja vacía → carga inicial ({len(rows)} filas)...")
+            print(f"[export] Hoja vacia, escribiendo carga inicial ({len(rows)} filas)...")
             ws.update(range_name="A1", values=[headers] + rows)
-            ws.format("A1:ZZ1", {"textFormat": {"bold": True},
-                                  "backgroundColor": {"red": 0.8, "green": 0.8, "blue": 0.8}})
+            ws.format("A1:ZZ1", {
+                "textFormat": {"bold": True},
+                "backgroundColor": {"red": 0.8, "green": 0.8, "blue": 0.8}
+            })
             ws.freeze(rows=1)
-
-            # Bloquear todos los IDs recién insertados
-            db_id_idx = {n: i for i, n in enumerate(headers)}.get("id")
-            new_bl = [["id"]] if not bl_data else []
-            for r in rows:
-                rid = str(r[db_id_idx]).strip() if db_id_idx is not None and db_id_idx < len(r) else ""
-                if rid and rid not in blocked_ids:
-                    blocked_ids.add(rid)
-                    new_bl.append([rid])
-            if new_bl:
-                blocklist.append_rows(new_bl, value_input_option="RAW")
-
             print(f"[export] OK Carga inicial. {len(rows)} filas, {len(headers)} columnas")
             print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
             return
@@ -204,19 +178,15 @@ def update_google_sheet(headers: List[str], rows: List[List[Any]]):
 
         db_idx       = {n: i for i, n in enumerate(headers)}
         db_fecha_idx = db_idx.get("fecha")
-        db_id_idx    = db_idx.get("id")
 
         sh_idx       = {n: i for i, n in enumerate(existing_headers)}
         sh_fecha_idx = sh_idx.get("fecha")
 
         if db_fecha_idx is None or sh_fecha_idx is None:
-            print("[export] ATENCION: falta columna 'fecha'. No se puede filtrar por fecha.")
-            return
-        if db_id_idx is None:
-            print("[export] ATENCION: falta columna 'id' en BD. No se puede deduplicar.")
+            print("[export] ATENCION: falta columna 'fecha'. No se puede filtrar.")
             return
 
-        # Máxima fecha existente en toda la hoja (recorre todas las filas)
+        # Fecha maxima en toda la hoja actual (recorre todas las filas)
         max_date = None
         for r in existing_data[1:]:
             if sh_fecha_idx < len(r):
@@ -224,64 +194,31 @@ def update_google_sheet(headers: List[str], rows: List[List[Any]]):
                 if d and (max_date is None or d > max_date):
                     max_date = d
 
-        # Si la blocklist estaba vacía, sembrarla con los IDs actuales de la BD
-        # para que, si el usuario borra filas históricas, no vuelvan.
-        if not blocked_ids:
-            print("[export] Blocklist vacia -> inicializando con todos los IDs de BD...")
-            new_bl = [["id"]]
-            for r in rows:
-                rid = str(r[db_id_idx]).strip() if db_id_idx < len(r) else ""
-                if rid:
-                    blocked_ids.add(rid)
-                    new_bl.append([rid])
-            blocklist.append_rows(new_bl, value_input_option="RAW")
-            print(f"[export] Blocklist inicializada con {len(new_bl)-1} IDs.")
-
         if max_date is None:
-            print("[export] ATENCION: No hay fechas válidas en la hoja. Abortando para evitar duplicados.")
+            print("[export] ATENCION: No hay fechas validas en la hoja. Abortando para evitar duplicados.")
             return
 
         print(f"[export] Fecha max en hoja: {max_date.isoformat()} | solo se agregan fechas posteriores")
 
-        # Filtrar filas de BD: fecha ESTRICTAMENTE mayor a max_date Y no en blocklist
+        # Filtrar filas de BD: solo las con fecha ESTRICTAMENTE mayor a max_date
         rows_to_append = []
-        ids_to_block   = []
-
         for db_row in sorted(rows, key=lambda r: (
             parse_date_safe(r[db_fecha_idx]) is None,
             parse_date_safe(r[db_fecha_idx])
         )):
-            rid      = str(db_row[db_id_idx]).strip() if db_id_idx < len(db_row) else ""
-            db_date  = parse_date_safe(db_row[db_fecha_idx]) if db_fecha_idx < len(db_row) else None
-
-            # BLOQUEO 1: ID ya visto alguna vez → nunca reinsertar
-            if rid and rid in blocked_ids:
-                continue
-
-            # BLOQUEO 2: fecha no es estrictamente posterior al máximo actual
+            db_date = parse_date_safe(db_row[db_fecha_idx]) if db_fecha_idx < len(db_row) else None
             if db_date is None or db_date <= max_date:
                 continue
-
             db_map  = {headers[i]: db_row[i] for i in range(len(headers))}
             new_row = [db_map.get(col, "") for col in existing_headers]
             rows_to_append.append(new_row)
-            if rid:
-                ids_to_block.append(rid)
 
         if not rows_to_append:
-            print("[export] OK No hay filas nuevas para agregar (append-only).")
+            print("[export] OK No hay filas nuevas para agregar.")
             print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
             return
 
-        # Insertar filas nuevas
         ws.append_rows(rows_to_append, value_input_option="RAW")
-
-        # Bloquear IDs recién insertados
-        if ids_to_block:
-            new_bl = [[rid] for rid in ids_to_block if rid not in blocked_ids]
-            if new_bl:
-                blocklist.append_rows(new_bl, value_input_option="RAW")
-
         print(f"[export] OK {len(rows_to_append)} filas nuevas agregadas.")
         print(f"[export] URL: https://docs.google.com/spreadsheets/d/{spreadsheet_id}")
 

@@ -10,7 +10,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-import chromedriver_autoinstaller
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 def parse_date_flexible(date_str: str) -> Optional[str]:
@@ -49,48 +50,156 @@ def parse_date_flexible(date_str: str) -> Optional[str]:
     return None
 
 def setup_chrome_driver():
-    """Setup Chrome driver with automatic chromedriver installation"""
-    try:
-        # Chrome options
-        chrome_options = Options()
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        chrome_options.add_experimental_option('useAutomationExtension', False)
-        
-        # Configurar directorio de descargas
-        downloads_dir = os.path.join(os.getcwd(), "downloads")
-        os.makedirs(downloads_dir, exist_ok=True)
-        
-        chrome_options.add_experimental_option("prefs", {
-            "download.default_directory": downloads_dir,
-            "download.prompt_for_download": False,
-            "download.directory_upgrade": True,
-        })
-        
-        print("⚙️ Inicializando Chrome driver...")
-        print("ℹ️ Usando Selenium Manager para gestión automática de drivers")
-        
-        # Initialize driver - Selenium 4+ maneja automáticamente el chromedriver
-        # No necesitamos chromedriver-autoinstaller
-        driver = webdriver.Chrome(options=chrome_options)
-        
-        # Scripts para ocultar automatización
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        driver.execute_script("window.navigator.chrome = {runtime: {}};")
-        
-        print("✅ Chrome driver inicializado correctamente")
-        return driver
-    except Exception as e:
-        print(f"❌ Error setting up Chrome driver: {e}")
-        print("\nℹ️ Soluciones posibles:")
-        print("1. Actualiza Chrome a la última versión: https://www.google.com/chrome/")
-        print("2. O ejecuta: pip install --upgrade selenium")
-        return None
+    """Setup Chrome driver with automatic chromedriver installation and retry logic"""
+    max_attempts = 3
+    last_error = None
+    
+    for attempt in range(1, max_attempts + 1):
+        try:
+            print(f"⚙️ Inicializando Chrome driver (intento {attempt}/{max_attempts})...")
+            
+            # Chrome options
+            chrome_options = Options()
+            # Headless mode SOLO si no estamos en modo debug local
+            # En Railway se activa automáticamente después
+            if os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium"):
+                chrome_options.add_argument("--headless=new")  # Headless mode para Railway
+            
+            # Opciones básicas de estabilidad
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            
+            # Opciones adicionales para Railway/Docker
+            chrome_options.add_argument("--disable-software-rasterizer")
+            chrome_options.add_argument("--disable-extensions")
+            chrome_options.add_argument("--disable-dev-tools")
+            chrome_options.add_argument("--disable-setuid-sandbox")
+            chrome_options.add_argument("--disable-web-security")
+            chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+            chrome_options.add_argument("--single-process")  # Importante para entornos con poca memoria
+            chrome_options.add_argument("--no-zygote")  # Importante para Docker
+            chrome_options.add_argument("--remote-debugging-port=9222")
+            chrome_options.add_argument("--disable-background-networking")
+            chrome_options.add_argument("--disable-default-apps")
+            chrome_options.add_argument("--disable-sync")
+            chrome_options.add_argument("--metrics-recording-only")
+            chrome_options.add_argument("--mute-audio")
+            chrome_options.add_argument("--no-first-run")
+            chrome_options.add_argument("--safebrowsing-disable-auto-update")
+            chrome_options.add_argument("--disable-crash-reporter")
+            
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # Configurar directorio de descargas
+            downloads_dir = os.path.join(os.getcwd(), "downloads")
+            os.makedirs(downloads_dir, exist_ok=True)
+            
+            chrome_options.add_experimental_option("prefs", {
+                "download.default_directory": downloads_dir,
+                "download.prompt_for_download": False,
+                "download.directory_upgrade": True,
+            })
+            
+            # Detectar si estamos en Railway/Docker o local (Windows/Mac/Linux)
+            is_railway = os.getenv("RAILWAY_ENVIRONMENT") or os.path.exists("/usr/bin/chromium")
+            
+            if is_railway:
+                print("🐳 Detectado entorno Railway/Docker - usando Chromium")
+                chrome_options.binary_location = "/usr/bin/chromium"
+                # IMPORTANTE: En Railway debe estar en modo headless
+                if "--headless" not in str(chrome_options.arguments):
+                    chrome_options.add_argument("--headless=new")
+                
+                # En Railway, buscar chromedriver en ubicaciones comunes
+                # Deshabilitar Selenium Manager completamente para evitar descargas
+                chromedriver_path = None
+                
+                # 1. Verificar variable de entorno
+                if os.getenv("CHROMEDRIVER_PATH") and os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
+                    chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+                
+                # 2. Verificar ubicaciones comunes
+                if not chromedriver_path:
+                    common_paths = ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver"]
+                    for path in common_paths:
+                        if os.path.exists(path):
+                            chromedriver_path = path
+                            break
+                
+                # 3. Si está en Nixpacks, buscar en /nix/store
+                if not chromedriver_path and os.path.exists("/nix/store"):
+                    import glob
+                    nix_paths = glob.glob("/nix/store/*/bin/chromedriver")
+                    if nix_paths:
+                        chromedriver_path = nix_paths[0]  # Usar el primero encontrado
+                
+                # 4. Buscar en PATH como último recurso
+                if not chromedriver_path:
+                    import shutil
+                    chromedriver_in_path = shutil.which("chromedriver")
+                    if chromedriver_in_path:
+                        chromedriver_path = chromedriver_in_path
+                
+                if chromedriver_path:
+                    print(f"✅ Usando chromedriver en: {chromedriver_path}")
+                    # Crear Service con el path explícito para evitar Selenium Manager
+                    service = Service(chromedriver_path)
+                    # Deshabilitar Selenium Manager estableciendo la variable de entorno
+                    os.environ["SE_SESSION_MANAGER"] = "false"
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                else:
+                    # Fallback: intentar sin service pero deshabilitando Selenium Manager
+                    print("⚠️  chromedriver no encontrado en ubicaciones comunes, intentando con PATH...")
+                    # Deshabilitar Selenium Manager completamente
+                    os.environ["SE_SESSION_MANAGER"] = "false"
+                    os.environ["SE_SELENIUM_MANAGER"] = "false"
+                    # Intentar sin service - debe estar en PATH
+                    driver = webdriver.Chrome(options=chrome_options)
+            else:
+                print("💻 Detectado entorno local - usando Chrome con webdriver-manager")
+                # Usar webdriver-manager para instalar automáticamente el chromedriver correcto
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            # Scripts para ocultar automatización
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            driver.execute_script("window.navigator.chrome = {runtime: {}};")
+            
+            print("✅ Chrome driver inicializado correctamente")
+            return driver
+            
+        except Exception as e:
+            last_error = e
+            print(f"❌ Error en intento {attempt}/{max_attempts}: {e}")
+            
+            if attempt < max_attempts:
+                wait_time = attempt * 5  # Esperar más tiempo en cada intento
+                print(f"⏳ Esperando {wait_time} segundos antes del próximo intento...")
+                time.sleep(wait_time)
+            else:
+                print(f"\n❌ Todos los intentos ({max_attempts}) fallaron")
+                print("\nℹ️ Soluciones posibles:")
+                print("1. Verifica que chromium y chromedriver estén instalados en Railway")
+                print("2. Revisa nixpacks.toml incluya: chromium, chromedriver")
+                print("3. Verifica memoria disponible en Railway")
+                print("4. Considera reiniciar el servicio en Railway")
+                import traceback
+                traceback.print_exc()
+                
+                # Enviar notificación de error
+                try:
+                    from utils.notifications import notify_chrome_error
+                    notify_chrome_error(last_error)
+                except Exception:
+                    pass  # Si falla la notificación, no romper el flujo
+                
+                return None
+    
+    return None
 
 def login_wordpress(driver, username, password):
     """Login to WordPress first, then navigate to Booknetic"""
@@ -140,7 +249,14 @@ def login_wordpress(driver, username, password):
         
         # Hacer click en login
         print("🔐 Haciendo login...")
-        login_button = driver.find_element(By.ID, "wp-submit")
+        try:
+            login_button = wait.until(EC.element_to_be_clickable((By.ID, "wp-submit")))
+        except:
+            # Intentar buscar por otros selectores
+            try:
+                login_button = driver.find_element(By.CSS_SELECTOR, "input[type='submit'][value*='Log']")
+            except:
+                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
         
         # Scroll y hacer visible
         driver.execute_script("arguments[0].scrollIntoView();", login_button)
@@ -149,39 +265,79 @@ def login_wordpress(driver, username, password):
         # Click usando JavaScript para evitar interceptaciones
         driver.execute_script("arguments[0].click();", login_button)
         
-        # Esperar resultado
+        # Esperar resultado - aumentar tiempo en Railway
         print("⏳ Esperando resultado...")
-        time.sleep(10)
+        time.sleep(15)  # Aumentado de 10 a 15 segundos para Railway
         
-        # Verificar resultado
-        current_url = driver.current_url
-        print(f"🔍 URL actual después de login: {current_url}")
+        # Verificar resultado - intentar múltiples veces
+        max_retries = 3
+        login_success = False
         
-        if 'wp-admin' in current_url:
-            print("🎉 ¡LOGIN EXITOSO!")
-            print(f"✅ Redirigido a: {current_url}")
+        for attempt in range(max_retries):
+            current_url = driver.current_url
+            print(f"🔍 Intento {attempt + 1}/{max_retries} - URL actual: {current_url}")
+            
+            if 'wp-admin' in current_url.lower() or 'admin.php' in current_url.lower():
+                print("🎉 ¡LOGIN EXITOSO!")
+                print(f"✅ Redirigido a: {current_url}")
+                login_success = True
+                break
+            elif attempt < max_retries - 1:
+                print(f"⏳ Esperando 5 segundos más...")
+                time.sleep(5)
+        
+        if login_success:
             return True
         else:
             print("❌ Login falló o requiere verificación adicional")
-            print("📸 Tomando captura de pantalla para debug...")
+            print(f"📄 URL final: {current_url}")
+            print(f"📄 Título de página: {driver.title}")
+            
+            # Tomar screenshot para debug (especialmente útil en Railway)
             try:
                 screenshot_path = os.path.join(os.getcwd(), "downloads", "login_failed.png")
                 driver.save_screenshot(screenshot_path)
                 print(f"📸 Captura guardada en: {screenshot_path}")
-            except:
-                pass
+            except Exception as screenshot_err:
+                print(f"⚠️ No se pudo guardar screenshot: {screenshot_err}")
             
             # Buscar mensajes de error en la página
             try:
                 error_msg = driver.find_element(By.ID, "login_error")
                 print(f"⚠️ Mensaje de error: {error_msg.text}")
             except:
-                pass
-                
+                try:
+                    # Buscar otros posibles mensajes de error
+                    error_elements = driver.find_elements(By.CSS_SELECTOR, ".error, .login-error, .message.error")
+                    if error_elements:
+                        for elem in error_elements:
+                            if elem.is_displayed():
+                                print(f"⚠️ Mensaje de error encontrado: {elem.text}")
+                except:
+                    pass
+            
+            # Verificar si las credenciales están configuradas
+            if not username or not password:
+                print("⚠️ ADVERTENCIA: Usuario o contraseña no están configurados")
+                print("   Verifica las variables de entorno:")
+                print("   - BOOKNETIC_USERNAME")
+                print("   - BOOKNETIC_PASSWORD")
+            
             return False
             
     except Exception as e:
-        print(f"Error during login: {e}")
+        print(f"❌ Error during login: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Información adicional para debug
+        print("\n🔍 Información adicional para debug:")
+        try:
+            print(f"   URL actual: {driver.current_url}")
+            print(f"   Título: {driver.title}")
+        except:
+            pass
+        
         return False
 
 def navigate_to_booknetic(driver):
@@ -225,50 +381,45 @@ def export_data_generic(driver, module_name, module_display_name):
         # Wait for the page to load
         wait = WebDriverWait(driver, 20)  # Aumentado de 15 a 20
         
-        # Intentar URL directa PRIMERO (más confiable)
-        print(f"🔍 Método 1: Intentando URL directa de export...")
-        export_url = f"https://hotboatchile.com/wp-admin/admin.php?page=booknetic&module={module_name}&action=export"
+        # NO usar URL directa - usar el botón de la interfaz
+        print(f"🔍 Buscando botón de export en la página...")
+        time.sleep(3)
+        
+        # Buscar botón de export CSV - ACTUALIZADO con el selector correcto
+        # Primero intentar con el selector específico de Booknetic
+        export_button = None
         
         try:
-            driver.get(export_url)
-            time.sleep(5)
-            print(f"✅ URL directa accedida: {export_url}")
-            print(f"📥 Esperando descarga de {module_display_name}...")
-            time.sleep(3)
-            return True
-        except Exception as e:
-            print(f"⚠️ URL directa falló: {e}")
+            export_button = driver.find_element(By.CSS_SELECTOR, "button.export_csv")
+            if export_button and export_button.is_displayed():
+                print(f"✅ Botón encontrado con selector: button.export_csv")
+                print(f"   Texto del botón: '{export_button.text}'")
+        except:
+            pass
         
-        # Si URL directa falló, volver a la página del módulo
-        print(f"🔍 Método 2: Buscando botón de export en la página...")
-        driver.get(module_url)
-        time.sleep(5)
-        
-        # Buscar botón de export CSV
-        possible_selectors = [
-            "button[data-action='export']",
-            ".btn-export",
-            "[data-toggle='export']",
-            "button.export-csv",
-            "a.export-csv",
-            "*[data-action*='export']",
-            "*[class*='export']",
-            "button[onclick*='export']",
-            ".fs-export-btn"
-        ]
-        
-        export_button = None
-        for selector in possible_selectors:
-            try:
-                export_button = driver.find_element(By.CSS_SELECTOR, selector)
-                if export_button and export_button.is_displayed():
-                    print(f"✅ Botón encontrado con selector: {selector}")
-                    print(f"   Texto del botón: '{export_button.text}'")
-                    break
-                else:
-                    export_button = None
-            except:
-                continue
+        # Si no encontró el botón, probar con otros selectores
+        if not export_button:
+            possible_selectors = [
+                "button[data-action='export']",
+                ".btn-export",
+                "[data-toggle='export']",
+                "button.export-csv",
+                "a.export-csv",
+                "button[onclick*='export']",
+                ".fs-export-btn"
+            ]
+            
+            for selector in possible_selectors:
+                try:
+                    export_button = driver.find_element(By.CSS_SELECTOR, selector)
+                    if export_button and export_button.is_displayed():
+                        print(f"✅ Botón encontrado con selector: {selector}")
+                        print(f"   Texto del botón: '{export_button.text}'")
+                        break
+                    else:
+                        export_button = None
+                except:
+                    continue
         
         if not export_button:
             # Buscar por texto
@@ -296,16 +447,58 @@ def export_data_generic(driver, module_name, module_display_name):
                 driver.execute_script("arguments[0].click();", export_button)
                 print("✅ Click realizado con JavaScript")
             except:
-                export_button.click()
-                print("✅ Click realizado normal")
+                try:
+                    export_button.click()
+                    print("✅ Click realizado normal")
+                except Exception as e:
+                    print(f"⚠️ Error haciendo click: {e}")
+                    return False
             
-            time.sleep(5)
-            print(f"📥 Descarga de {module_display_name} completada")
-            return True
+            # Esperar más tiempo para la descarga (especialmente en headless)
+            print(f"⏳ Esperando descarga de {module_display_name}...")
+            
+            # Verificar que realmente se descargó el archivo
+            downloads_path = Path(os.getcwd()) / "downloads"
+            archivos_antes = set(downloads_path.glob(f"{module_name}*.csv"))
+            tiempo_antes = time.time()
+            
+            archivo_descargado = None
+            for i in range(20):  # Esperar hasta 20 segundos
+                time.sleep(1)
+                
+                # Buscar archivos nuevos
+                archivos_ahora = set(downloads_path.glob(f"{module_name}*.csv"))
+                archivos_nuevos = archivos_ahora - archivos_antes
+                
+                for archivo in archivos_nuevos:
+                    tiempo_archivo = archivo.stat().st_mtime
+                    if tiempo_archivo >= tiempo_antes:
+                        archivo_descargado = archivo
+                        break
+                
+                if archivo_descargado:
+                    break
+                
+                # Verificar si está descargando (.crdownload)
+                crdownload = list(downloads_path.glob("*.crdownload"))
+                if crdownload:
+                    print(f"   [{i+1}/20] Descargando...", end='\r')
+                else:
+                    print(f"   [{i+1}/20] Esperando...", end='\r')
+            
+            print()  # Nueva línea después del \r
+            
+            if archivo_descargado:
+                print(f"✅ Archivo descargado: {archivo_descargado.name}")
+                print(f"   Ruta: {archivo_descargado.absolute()}")
+                return True
+            else:
+                print(f"⚠️  No se detectó descarga de {module_display_name} después de 20 segundos")
+                print(f"   Verifica manualmente en: {downloads_path.absolute()}")
+                return False  # Cambiar a False para que sepa que falló
         else:
-            print(f"⚠️ No se encontró botón de export")
-            print(f"ℹ️ Pero la URL directa ya descargó el archivo")
-            return True  # La URL directa ya funcionó
+            print(f"❌ No se encontró botón de export para {module_display_name}")
+            return False
         
     except Exception as e:
         print(f"❌ Error durante export de {module_display_name}: {e}")
@@ -477,14 +670,63 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
         print("⚠️ Database disabled, skipping upload")
         return results
     
-    try:
-        # Import DB functions only if needed
-        from db.utils import upsert_many
-        
+    # Verificar DATABASE_URL primero
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
         print()
         print("=" * 60)
-        print("📤 Cargando datos a PostgreSQL...")
+        print("❌ ERROR: DATABASE_URL NO ESTÁ CONFIGURADO")
         print("=" * 60)
+        print()
+        print("Para cargar datos a PostgreSQL, necesitas configurar DATABASE_URL:")
+        print()
+        print("Opción 1: Variable de entorno")
+        print("  Windows PowerShell:")
+        print('    $env:DATABASE_URL="postgresql://user:pass@host:port/db"')
+        print()
+        print("  Windows CMD:")
+        print('    set DATABASE_URL=postgresql://user:pass@host:port/db')
+        print()
+        print("  Linux/Mac:")
+        print('    export DATABASE_URL="postgresql://user:pass@host:port/db"')
+        print()
+        print("Opción 2: Usar test_with_railway.py que lo configura automáticamente")
+        print("  python test_with_railway.py")
+        print()
+        print("=" * 60)
+        return results
+    
+    try:
+        # Import DB functions only if needed
+        from db.utils import replace_all
+        from db.connection import get_connection
+        
+        # Verificar conexión antes de continuar
+        print()
+        print("=" * 60)
+        print("📤 REEMPLAZANDO datos en PostgreSQL (TRUNCATE + INSERT)...")
+        print("=" * 60)
+        print("⚠️  ATENCIÓN: Las tablas serán vaciadas y reemplazadas completamente")
+        print("=" * 60)
+        print()
+        print("🔍 Verificando conexión a PostgreSQL...")
+        
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT current_database()")
+                    db_name = cur.fetchone()[0]
+                    print(f"✅ Conectado a: {db_name}")
+        except Exception as conn_error:
+            print(f"❌ Error conectando a PostgreSQL: {conn_error}")
+            print()
+            print("Verifica que:")
+            print("  1. DATABASE_URL esté correcto")
+            print("  2. La base de datos esté accesible")
+            print("  3. Las credenciales sean correctas")
+            print()
+            return results
+        
         print()
         
         # 1. Load Customers
@@ -494,14 +736,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(customers_file)
             if rows:
                 mapped = map_customers_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_customers...")
+                affected = replace_all(
                     table="booknetic_customers",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["name", "email", "phone", "status", "raw"]
+                    rows=mapped
                 )
                 results["customers"] = affected
-                print(f"✅ {affected} customers insertados/actualizados\n")
+                print(f"   ✅ {affected} customers reemplazados\n")
         
         # 2. Load Appointments
         appointments_file = find_latest_csv(downloads_dir, "appointments_*.csv")
@@ -510,14 +751,13 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(appointments_file)
             if rows:
                 mapped = map_appointments_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_appointments...")
+                affected = replace_all(
                     table="booknetic_appointments",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["customer_name", "customer_email", "service_name", "starts_at", "status", "raw"]
+                    rows=mapped
                 )
                 results["appointments"] = affected
-                print(f"✅ {affected} appointments insertados/actualizados\n")
+                print(f"   ✅ {affected} appointments reemplazados\n")
         
         # 3. Load Payments
         payments_file = find_latest_csv(downloads_dir, "payments_*.csv")
@@ -526,25 +766,43 @@ def load_csv_to_database(downloads_dir: Path, use_db: bool = True) -> Dict[str, 
             rows = parse_csv_file(payments_file)
             if rows:
                 mapped = map_payments_to_db(rows)
-                affected = upsert_many(
+                print(f"   🔄 Reemplazando tabla booknetic_payments...")
+                affected = replace_all(
                     table="booknetic_payments",
-                    rows=mapped,
-                    conflict_columns=["id"],
-                    update_columns=["appointment_id", "amount", "currency", "status", "method", "paid_at", "raw"]
+                    rows=mapped
                 )
                 results["payments"] = affected
-                print(f"✅ {affected} payments insertados/actualizados\n")
+                print(f"   ✅ {affected} payments reemplazados\n")
         
         print("=" * 60)
         print("✅ Carga a base de datos completada")
         print("=" * 60)
         
-    except ImportError:
-        print("⚠️ No se pudo importar módulos de DB. Asegúrate de tener DATABASE_URL configurado.")
+    except ImportError as import_err:
+        print()
+        print("=" * 60)
+        print("❌ ERROR: No se pudieron importar módulos de DB")
+        print("=" * 60)
+        print(f"Error: {import_err}")
+        print()
+        print("Asegúrate de que:")
+        print("  1. DATABASE_URL esté configurado")
+        print("  2. psycopg esté instalado: pip install psycopg[binary]")
+        print("  3. Los módulos db/ estén disponibles")
+        print()
+        print("=" * 60)
     except Exception as e:
-        print(f"❌ Error cargando a base de datos: {e}")
+        print()
+        print("=" * 60)
+        print("❌ ERROR CARGANDO A BASE DE DATOS")
+        print("=" * 60)
+        print(f"Error: {e}")
+        print()
         import traceback
+        print("Traceback completo:")
         traceback.print_exc()
+        print()
+        print("=" * 60)
     
     return results
 
@@ -638,30 +896,52 @@ def main():
             print("\n⏳ Esperando 3 segundos para asegurar que las descargas terminen...")
             time.sleep(3)
             
-            try:
-                db_results = load_csv_to_database(Path(downloads_path), use_db=True)
-                
-                # Final summary
+            # Verificar DATABASE_URL antes de intentar cargar
+            if not os.getenv("DATABASE_URL"):
                 print()
                 print("=" * 60)
-                print("📊 RESUMEN FINAL")
+                print("⚠️  DATABASE_URL NO CONFIGURADO")
                 print("=" * 60)
-                print(f"📥 CSV Exportados: {exports_completed}/3")
-                print(f"💾 Customers en DB: {db_results['customers']}")
-                print(f"💾 Appointments en DB: {db_results['appointments']}")
-                print(f"💾 Payments en DB: {db_results['payments']}")
-                total_db = sum(db_results.values())
-                print(f"💾 Total registros en DB: {total_db}")
+                print()
+                print("Los CSV se exportaron correctamente, pero no se pueden cargar a PostgreSQL")
+                print("porque DATABASE_URL no está configurado.")
+                print()
+                print("Para cargar los datos a PostgreSQL:")
+                print("  1. Configura DATABASE_URL como variable de entorno")
+                print("  2. O ejecuta: python test_with_railway.py")
+                print()
+                print("Los archivos CSV están guardados en:")
+                print(f"   📁 {downloads_path}")
+                print()
                 print("=" * 60)
-                
-                if total_db > 0:
-                    print("\n🎉 ¡Proceso completado exitosamente!")
-                else:
-                    print("\n⚠️ Los CSV se exportaron pero no se cargaron datos a la DB")
+            else:
+                try:
+                    db_results = load_csv_to_database(Path(downloads_path), use_db=True)
                     
-            except Exception as e:
-                print(f"\n⚠️ Error al cargar a base de datos: {e}")
-                print("✅ Los CSV se exportaron correctamente en la carpeta downloads/")
+                    # Final summary
+                    print()
+                    print("=" * 60)
+                    print("📊 RESUMEN FINAL")
+                    print("=" * 60)
+                    print(f"📥 CSV Exportados: {exports_completed}/3")
+                    print(f"💾 Customers en DB: {db_results['customers']}")
+                    print(f"💾 Appointments en DB: {db_results['appointments']}")
+                    print(f"💾 Payments en DB: {db_results['payments']}")
+                    total_db = sum(db_results.values())
+                    print(f"💾 Total registros en DB: {total_db}")
+                    print("=" * 60)
+                    
+                    if total_db > 0:
+                        print("\n🎉 ¡Proceso completado exitosamente!")
+                    else:
+                        print("\n⚠️ Los CSV se exportaron pero no se cargaron datos a la DB")
+                        print("   Revisa los mensajes de error anteriores para más detalles")
+                        
+                except Exception as e:
+                    print(f"\n⚠️ Error al cargar a base de datos: {e}")
+                    print("✅ Los CSV se exportaron correctamente en la carpeta downloads/")
+                    import traceback
+                    traceback.print_exc()
         elif exports_completed > 0:
             print("\n🎉 CSV exportados correctamente!")
             print("ℹ️ Carga a base de datos deshabilitada (USE_DATABASE=false)")

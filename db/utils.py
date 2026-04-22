@@ -12,6 +12,69 @@ def now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def replace_all(
+    table: str,
+    rows: Iterable[Dict[str, Any]],
+) -> int:
+    """
+    Truncate table and insert all rows (full replacement).
+    Use this when the CSV export contains ALL data and we want
+    an exact mirror of the source system.
+    """
+    rows_list = [r for r in rows if r]
+    if not rows_list:
+        print(f"[db] No rows to insert into {table}, skipping truncate")
+        return 0
+
+    all_columns: List[str] = list({k for row in rows_list for k in row.keys()})
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Step 1: Truncate table
+            truncate_stmt = sql.SQL("TRUNCATE TABLE {table} CASCADE").format(
+                table=sql.Identifier(table)
+            )
+            print(f"[db] Truncating table {table}...")
+            cur.execute(truncate_stmt)
+            
+            # Step 2: Insert all rows in batches
+            batch_size = 500
+            total_inserted = 0
+            
+            for i in range(0, len(rows_list), batch_size):
+                batch = rows_list[i : i + batch_size]
+                
+                insert_stmt = sql.SQL(
+                    "INSERT INTO {table} ({cols}) VALUES {values}"
+                ).format(
+                    table=sql.Identifier(table),
+                    cols=sql.SQL(", ").join(sql.Identifier(c) for c in all_columns),
+                    values=sql.SQL(", ").join(
+                        sql.SQL("(")
+                        + sql.SQL(", ").join(sql.Placeholder() for _ in all_columns)
+                        + sql.SQL(")")
+                        for _ in batch
+                    ),
+                )
+
+                flat_params: List[Any] = []
+                for r in batch:
+                    for c in all_columns:
+                        v = r.get(c)
+                        if isinstance(v, (dict, list)):
+                            v = Json(v)
+                        flat_params.append(v)
+
+                cur.execute(insert_stmt, flat_params)
+                total_inserted += len(batch)
+                print(f"[db] Inserted {total_inserted}/{len(rows_list)} rows into {table}")
+            
+        conn.commit()
+        print(f"[db] ✅ {table} replaced with {len(rows_list)} rows")
+
+    return len(rows_list)
+
+
 def upsert_many(
     table: str,
     rows: Iterable[Dict[str, Any]],

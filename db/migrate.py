@@ -29,9 +29,9 @@ def ensure_schema() -> None:
         end;
         $$ language plpgsql;
         """,
-        # leads table + trigger
+        # Informacion Reservas table + trigger
         """
-        create table if not exists leads (
+        create table if not exists "Informacion Reservas" (
             id text primary key,
             name text,
             email text,
@@ -44,15 +44,15 @@ def ensure_schema() -> None:
         """,
         # Ensure new columns exist on already-created tables
         """
-        alter table if exists leads
+        alter table if exists "Informacion Reservas"
         add column if not exists raw jsonb;
         """,
         """
-        drop trigger if exists trg_leads_updated_at on leads;
+        drop trigger if exists trg_informacion_reservas_updated_at on "Informacion Reservas";
         """,
         """
-        create trigger trg_leads_updated_at
-        before update on leads
+        create trigger trg_informacion_reservas_updated_at
+        before update on "Informacion Reservas"
         for each row execute procedure set_updated_at();
         """,
         # booknetic_appointments + trigger
@@ -119,6 +119,42 @@ def ensure_schema() -> None:
         """
         create trigger trg_booknetic_pay_updated_at
         before update on booknetic_payments
+        for each row execute procedure set_updated_at();
+        """,
+        # Stock table + trigger
+        """
+        create table if not exists "Stock" (
+            id text primary key,
+            raw jsonb,
+            source text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_stock_updated_at on "Stock";
+        """,
+        """
+        create trigger trg_stock_updated_at
+        before update on "Stock"
+        for each row execute procedure set_updated_at();
+        """,
+        # Precios Extras table + trigger
+        """
+        create table if not exists "Precios Extras" (
+            id text primary key,
+            raw jsonb,
+            source text,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_precios_extras_updated_at on "Precios Extras";
+        """,
+        """
+        create trigger trg_precios_extras_updated_at
+        before update on "Precios Extras"
         for each row execute procedure set_updated_at();
         """,
     ]

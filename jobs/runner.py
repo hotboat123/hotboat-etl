@@ -16,7 +16,6 @@ if project_root not in sys.path:
 
 from db.utils import run_with_job_meta, print_db_identity
 from db.migrate import ensure_schema
-from jobs.job_scrape_booknetic import run as run_booknetic
 
 # Importar dotenv solo si está disponible (para desarrollo local)
 try:
@@ -34,15 +33,27 @@ except Exception:
     SHEETS_ENABLED = False
     print("[runner] Google Sheets import disabled (missing config)")
 
+# Importar export de reservas a sheets
+try:
+    from jobs.export_reservas_to_sheets import run as run_export_reservas
+    EXPORT_RESERVAS_ENABLED = True
+except Exception as e:
+    EXPORT_RESERVAS_ENABLED = False
+    print(f"[runner] Export Reservas to Sheets disabled: {e}")
+
+try:
+    from jobs.job_meta_ads import run as run_meta_ads
+except Exception as e:
+    run_meta_ads = None  # type: ignore[assignment]
+    print(f"[runner] Meta Ads module not available: {e}")
+
 
 def load_env() -> None:
     """Load environment variables"""
     if DOTENV_AVAILABLE:
-        # Load .env if present in container (useful locally)
         load_dotenv()
         print("[env] Loaded .env file")
-        
-        # Optionally load a base64-encoded .env provided via env var (Railway-safe)
+
         b64 = os.getenv("DOTENV_BASE64")
         if b64:
             try:
@@ -61,82 +72,157 @@ def run_job_safely(job_name: str, job_func):
     """Ejecuta un job con manejo de errores"""
     try:
         print(f"\n{'='*60}")
-        print(f"🚀 Ejecutando job: {job_name}")
-        print(f"⏰ Hora: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Ejecutando job: {job_name}")
+        print(f"Hora: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}\n")
-        
+
         run_with_job_meta(job_name, job_func)
-        
-        print(f"\n✅ Job '{job_name}' completado exitosamente\n")
+
+        print(f"\n[OK] Job '{job_name}' completado exitosamente\n")
+        return True
     except Exception as e:
-        print(f"\n❌ Error en job '{job_name}': {e}\n")
+        print(f"\n[ERROR] Job '{job_name}': {e}\n")
         import traceback
         traceback.print_exc()
+
+        try:
+            from utils.notifications import notify_job_failure
+            notify_job_failure(job_name, e)
+        except Exception:
+            pass
+
+        return False
 
 
 def main() -> None:
     """Main loop - ejecuta jobs cada X minutos"""
     load_env()
-    
+
+    meta_ads_enabled = bool(
+        os.getenv("META_ACCESS_TOKEN") and os.getenv("META_AD_ACCOUNT_ID")
+    ) and (run_meta_ads is not None)
+
     print("="*60)
-    print("🚀 HotBoat ETL - Runner Simple (SIN APScheduler)")
+    print("HotBoat ETL - Runner")
     print("="*60)
     print()
-    
-    # Ensure DB schema exists
+
     print_db_identity()
     ensure_schema()
-    
-    # Configuración de intervalos (en segundos)
-    BOOKNETIC_INTERVAL = int(os.getenv("BOOKNETIC_INTERVAL", "900"))  # 15 min por defecto
-    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))  # 10 min por defecto
-    
-    print(f"⚙️ Configuración:")
-    print(f"   - Booknetic: cada {BOOKNETIC_INTERVAL//60} minutos")
+
+    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))          # 10 min
+    EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900"))  # 15 min
+    META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))     # 1 h
+
+    print("Configuracion:")
     if SHEETS_ENABLED:
         print(f"   - Sheets: cada {SHEETS_INTERVAL//60} minutos")
     else:
-        print(f"   - Sheets: DESHABILITADO")
+        print("   - Sheets: DESHABILITADO")
+    if EXPORT_RESERVAS_ENABLED:
+        print(f"   - Export Reservas: cada {EXPORT_RESERVAS_INTERVAL//60} minutos")
+    else:
+        print("   - Export Reservas: DESHABILITADO")
+    if meta_ads_enabled:
+        print(f"   - Meta Ads: cada {META_ADS_INTERVAL//60} minutos")
+    else:
+        print("   - Meta Ads: DESHABILITADO (falta META_ACCESS_TOKEN / META_AD_ACCOUNT_ID o modulo)")
     print()
-    
-    # Ejecutar Booknetic inmediatamente al inicio
-    print("🔷 Ejecución inicial de Booknetic...")
-    run_job_safely("booknetic_scrape", run_booknetic)
-    
-    last_booknetic_run = time.time()
+
+    failure_tracker = {
+        "sheets_import": {"consecutive_failures": 0},
+        "export_reservas_sheets": {"consecutive_failures": 0},
+        "meta_ads_sync": {"consecutive_failures": 0},
+    }
+
+    # --- Ejecución inicial ---
+    if meta_ads_enabled and run_meta_ads is not None:
+        print("Ejecucion inicial de Meta Ads...")
+        success = run_job_safely("meta_ads_sync", run_meta_ads)
+        if not success:
+            failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
+
     last_sheets_run = time.time()
-    
+    last_export_reservas_run = time.time()
+    last_meta_ads_run = time.time()
+
     print("\n" + "="*60)
-    print("⏰ Loop iniciado - Esperando próximas ejecuciones...")
+    print("Loop iniciado - Esperando proximas ejecuciones...")
     print("="*60)
     print()
-    
+
     try:
         while True:
             current_time = time.time()
-            
-            # Ejecutar Booknetic si pasó el intervalo
-            if current_time - last_booknetic_run >= BOOKNETIC_INTERVAL:
-                run_job_safely("booknetic_scrape", run_booknetic)
-                last_booknetic_run = current_time
-            
-            # Ejecutar Sheets si está habilitado y pasó el intervalo
+
+            # Sheets
             if SHEETS_ENABLED and current_time - last_sheets_run >= SHEETS_INTERVAL:
-                run_job_safely("sheets_import", run_sheets)
+                success = run_job_safely("sheets_import", run_sheets)
                 last_sheets_run = current_time
-            
-            # Calcular tiempo hasta próxima ejecución
-            time_to_next_booknetic = BOOKNETIC_INTERVAL - (current_time - last_booknetic_run)
-            next_run = dt.datetime.now() + dt.timedelta(seconds=time_to_next_booknetic)
-            
-            print(f"💤 Esperando... Próxima ejecución de Booknetic: {next_run.strftime('%H:%M:%S')}")
-            
-            # Dormir por 60 segundos (1 minuto)
+                if success:
+                    if failure_tracker["sheets_import"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure("sheets_import",
+                                failure_tracker["sheets_import"]["consecutive_failures"])
+                        except Exception:
+                            pass
+                    failure_tracker["sheets_import"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["sheets_import"]["consecutive_failures"] += 1
+
+            # Export Reservas
+            if EXPORT_RESERVAS_ENABLED and current_time - last_export_reservas_run >= EXPORT_RESERVAS_INTERVAL:
+                try:
+                    success = run_job_safely("export_reservas_sheets", run_export_reservas)
+                    last_export_reservas_run = current_time
+                    if success:
+                        if failure_tracker["export_reservas_sheets"]["consecutive_failures"] >= 3:
+                            try:
+                                from utils.notifications import notify_success_after_failure
+                                notify_success_after_failure("export_reservas_sheets",
+                                    failure_tracker["export_reservas_sheets"]["consecutive_failures"])
+                            except Exception:
+                                pass
+                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] = 0
+                    else:
+                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
+                except Exception as e:
+                    print(f"[runner] Error ejecutando export_reservas_sheets: {e}")
+                    failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
+                    last_export_reservas_run = current_time
+
+            # Meta Ads
+            if (
+                meta_ads_enabled
+                and run_meta_ads is not None
+                and current_time - last_meta_ads_run >= META_ADS_INTERVAL
+            ):
+                success = run_job_safely("meta_ads_sync", run_meta_ads)
+                last_meta_ads_run = current_time
+                if success:
+                    if failure_tracker["meta_ads_sync"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure(
+                                "meta_ads_sync",
+                                failure_tracker["meta_ads_sync"]["consecutive_failures"],
+                            )
+                        except Exception:
+                            pass
+                    failure_tracker["meta_ads_sync"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
+
+            time_to_next = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
+            next_run = dt.datetime.now() + dt.timedelta(seconds=max(time_to_next, 0))
+            print(f"Esperando... Proxima ejecucion Meta Ads: {next_run.strftime('%H:%M:%S')}")
+
             time.sleep(60)
-            
+
     except (KeyboardInterrupt, SystemExit):
         print("\n" + "="*60)
-        print("🛑 Runner detenido")
+        print("Runner detenido")
         print("="*60)
         time.sleep(0.5)
 

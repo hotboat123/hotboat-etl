@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from db.connection import get_connection
 
 
@@ -157,11 +160,167 @@ def ensure_schema() -> None:
         before update on "Precios Extras"
         for each row execute procedure set_updated_at();
         """,
+        # Meta Ads (Marketing API sync for DBeaver / analytics)
+        """
+        create table if not exists meta_campaigns (
+            id text primary key,
+            ad_account_id text not null,
+            name text,
+            status text,
+            objective text,
+            raw jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_meta_campaigns_updated_at on meta_campaigns;
+        """,
+        """
+        create trigger trg_meta_campaigns_updated_at
+        before update on meta_campaigns
+        for each row execute procedure set_updated_at();
+        """,
+        """
+        create table if not exists meta_adsets (
+            id text primary key,
+            ad_account_id text not null,
+            campaign_id text,
+            name text,
+            status text,
+            raw jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_meta_adsets_updated_at on meta_adsets;
+        """,
+        """
+        create trigger trg_meta_adsets_updated_at
+        before update on meta_adsets
+        for each row execute procedure set_updated_at();
+        """,
+        """
+        create table if not exists meta_ads (
+            id text primary key,
+            ad_account_id text not null,
+            campaign_id text,
+            adset_id text,
+            name text,
+            status text,
+            raw jsonb,
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_meta_ads_updated_at on meta_ads;
+        """,
+        """
+        create trigger trg_meta_ads_updated_at
+        before update on meta_ads
+        for each row execute procedure set_updated_at();
+        """,
+        """
+        create table if not exists meta_ads_insights (
+            ad_id text not null,
+            date_start date not null,
+            date_stop date,
+            ad_account_id text,
+            campaign_id text,
+            adset_id text,
+            impressions bigint,
+            clicks bigint,
+            reach bigint,
+            spend numeric,
+            frequency numeric,
+            cpm numeric,
+            cpc numeric,
+            ctr numeric,
+            cpp numeric,
+            actions jsonb,
+            cost_per_action_type jsonb,
+            raw jsonb,
+            fetched_at timestamptz not null default now(),
+            primary key (ad_id, date_start)
+        );
+        """,
+        """
+        create index if not exists idx_meta_ads_insights_campaign_date
+        on meta_ads_insights (campaign_id, date_start desc);
+        """,
+        """
+        create index if not exists idx_meta_ads_insights_date
+        on meta_ads_insights (date_start desc);
+        """,
+        # flujo_caja (importado desde Google Sheets "Looker HotBoat")
+        """
+        create table if not exists flujo_caja (
+            id text primary key,
+            fila integer,
+            raw jsonb,
+            synced_at timestamptz not null default now(),
+            created_at timestamptz not null default now(),
+            updated_at timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_flujo_caja_updated_at on flujo_caja;
+        """,
+        """
+        create trigger trg_flujo_caja_updated_at
+        before update on flujo_caja
+        for each row execute procedure set_updated_at();
+        """,
     ]
 
     with get_connection() as conn:
         with conn.cursor() as cur:
             for stmt in statements:
+                cur.execute(stmt)
+        conn.commit()
+
+    _ensure_meta_analytics_view()
+    _ensure_marketing_costs_daily_view()
+
+
+def _ensure_marketing_costs_daily_view() -> None:
+    """Redefine marketing_costs_daily desde meta_ads_insights (sql/marketing_costs_daily_view.sql)."""
+    path = Path(__file__).resolve().parent.parent / "sql" / "marketing_costs_daily_view.sql"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    text = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    ).strip()
+    if not text:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP VIEW IF EXISTS marketing_costs_daily CASCADE")
+            cur.execute(text)
+        conn.commit()
+
+
+def _ensure_meta_analytics_view() -> None:
+    """Crea funciones helper + vista v_meta_ads_analytics (sql/v_meta_ads_analytics.sql)."""
+    path = Path(__file__).resolve().parent.parent / "sql" / "v_meta_ads_analytics.sql"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    text = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    )
+    # Partir en CREATE/COMMENT sin romper $$ ... $$
+    parts = re.split(r"(?=\n(?:CREATE OR REPLACE|COMMENT ON))", "\n" + text.strip())
+    stmts = [p.strip() for p in parts if p.strip()]
+    if not stmts:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP VIEW IF EXISTS v_meta_ads_analytics CASCADE")
+            for stmt in stmts:
                 cur.execute(stmt)
         conn.commit()
 

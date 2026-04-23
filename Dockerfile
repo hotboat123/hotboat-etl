@@ -1,5 +1,6 @@
-# Usar imagen base de Python con Chromium
-FROM python:3.11-slim-bookworm
+# Imagen oficial vía ECR Public (evita pulls a Docker Hub cuando auth.docker.io falla con 5xx).
+# Equivalente a python:3.11-slim-bookworm en hub.docker.com.
+FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm
 
 # Actualizar repositorios e instalar dependencias del sistema para Chromium y Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -7,9 +7,15 @@ Requires env:
 
 Optional:
   META_API_VERSION    Default v21.0
-  META_DATE_PRESET    Default last_30d (ej. last_90d, last_365d). Ignorado si defines rango explícito.
+  META_DATE_PRESET    Default last_30d. Valores válidos: last_7d, last_30d, last_90d, maximum, last_year, etc. (Meta no admite last_365d; se mapea a maximum).
   META_TIME_RANGE_SINCE / META_TIME_RANGE_UNTIL  YYYY-MM-DD (ambas obligatorias). Usa time_range en la API.
+    Sin META_APPEND_ROLLING_PRESET, cada sync solo pide ese rango (ej. 2025) y no actualiza el mes actual.
+  META_APPEND_ROLLING_PRESET  Ej. last_30d: si usas time_range, hace una 2ª petición con este date_preset para mezclar datos recientes.
   META_INSIGHTS_LEVEL Default ad  (campaign | adset | ad)
+  META_INSIGHTS_INCLUDE_VIDEO  Default 0. Si 1, pide métricas de vídeo (más pesadas; pueden provocar error API #1).
+  META_INSIGHTS_TIME_CHUNK_DAYS  Default 31. Parte time_range / presets largos en ventanas de a lo sumo N días (evita "reduce the amount of data").
+  META_INSIGHTS_MAX_CHUNKS  Default 36. Con maximum/data_maximum, máximo de ventanas hacia atrás (~3 años si chunk=31).
+  META_INSIGHTS_PAGE_LIMIT  Default 25. Límite por página en /insights (más bajo = menos carga por respuesta).
   META_SYNC_MARKETING_COSTS_TABLE  Default 1: tras insights, rellena tabla marketing_costs desde meta_ads_insights. 0 para desactivar.
 """
 from __future__ import annotations
@@ -100,13 +106,37 @@ def _sync_marketing_costs_from_meta() -> None:
 
 def _meta_api_error_message(code: Any, msg: str) -> str:
     base = f"Meta API error {code}: {msg}"
-    if code == 190 or (isinstance(msg, str) and "expired" in msg.lower() and "token" in msg.lower()):
+    sm = str(msg).lower() if msg else ""
+    if code == 190 and "parse" in sm:
+        return (
+            f"{base} — Revisa META_ACCESS_TOKEN: una sola línea, sin comillas extra ni espacios raros al inicio/fin; "
+            f"regenera el token si hace falta."
+        )
+    if code == 190 or ("expired" in sm and "token" in sm):
         return (
             f"{base} — Token caducado o inválido. Genera uno nuevo en el Explorador Graph "
             f"(permiso ads_read) y actualiza META_ACCESS_TOKEN en .env / Railway. "
             f"Los tokens de corta duración caducan en ~1–2 h; en producción usa token de larga duración."
         )
+    if code == 1 and "reduce" in sm and "data" in sm:
+        return (
+            f"{base} — La consulta de insights es demasiado grande. "
+            f"Prueba: META_INSIGHTS_LEVEL=adset o campaign, "
+            f"META_INSIGHTS_TIME_CHUNK_DAYS más bajo (p. ej. 14), "
+            f"dejar META_INSIGHTS_INCLUDE_VIDEO=0, o un META_DATE_PRESET más corto."
+        )
     return base
+
+
+def _normalize_access_token(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    t = str(raw).strip()
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        t = t[1:-1].strip()
+    if "\n" in t or "\r" in t:
+        print("[meta_ads] ADVERTENCIA: META_ACCESS_TOKEN contiene saltos de línea; debe ser una sola línea.")
+    return t or None
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -114,6 +144,137 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     if v is None or str(v).strip() == "":
         return default
     return str(v).strip()
+
+
+# date_preset permitido por Meta en /insights (error #100 si falla)
+_VALID_INSIGHT_DATE_PRESETS = frozenset(
+    {
+        "today",
+        "yesterday",
+        "this_month",
+        "last_month",
+        "this_quarter",
+        "maximum",
+        "data_maximum",
+        "last_3d",
+        "last_7d",
+        "last_14d",
+        "last_28d",
+        "last_30d",
+        "last_90d",
+        "last_week_mon_sun",
+        "last_week_sun_sat",
+        "last_quarter",
+        "last_year",
+        "this_week_mon_today",
+        "this_week_sun_today",
+        "this_year",
+    }
+)
+
+# Valores que la gente suele poner pero Meta no acepta en insights
+_ALIAS_INSIGHT_DATE_PRESET = {
+    "last_365d": "maximum",
+    "last_60d": "last_90d",
+    "last_180d": "last_90d",
+}
+
+
+def _normalize_insight_date_preset(value: str, env_name: str) -> str:
+    v = (value or "last_30d").strip()
+    key = v.lower()
+    if key in _ALIAS_INSIGHT_DATE_PRESET:
+        repl = _ALIAS_INSIGHT_DATE_PRESET[key]
+        print(
+            f"[meta_ads] AVISO: {env_name}={v!r} no es válido en Insights API; "
+            f"usando {repl!r}. Para más histórico usa maximum/data_maximum o META_TIME_RANGE_*."
+        )
+        v = repl
+    if v in _VALID_INSIGHT_DATE_PRESETS:
+        return v
+    raise RuntimeError(
+        f"{env_name}={value!r} no es un date_preset válido para insights. "
+        f"Ej.: last_7d, last_30d, last_90d, maximum, last_year. "
+        f"(Lista oficial en error #100 de la API Meta.)"
+    )
+
+
+# Presets que suelen requerir varias ventanas time_range (error #1 si una sola petición)
+_CHUNKED_DATE_PRESETS = frozenset(
+    {
+        "maximum",
+        "data_maximum",
+        "last_year",
+        "last_90d",
+        "last_quarter",
+        "this_year",
+        "this_quarter",
+    }
+)
+
+
+def _chunk_inclusive_ranges(
+    since: dt.date, until: dt.date, max_span_days: int
+) -> List[tuple[dt.date, dt.date]]:
+    """Parte [since, until] en ventanas disjuntas de a lo sumo max_span_days (inclusive)."""
+    if since > until:
+        return []
+    max_span_days = max(1, max_span_days)
+    out: List[tuple[dt.date, dt.date]] = []
+    cur_start = since
+    while cur_start <= until:
+        cur_end = min(until, cur_start + dt.timedelta(days=max_span_days - 1))
+        out.append((cur_start, cur_end))
+        cur_start = cur_end + dt.timedelta(days=1)
+    return out
+
+
+def _backward_time_windows(
+    total_days: int, chunk_days: int, end: dt.date
+) -> List[tuple[dt.date, dt.date]]:
+    """Ventanas desde end hacia atrás que cubren total_days días (inclusive), sin solapar."""
+    chunks: List[tuple[dt.date, dt.date]] = []
+    remaining = max(0, total_days)
+    cur_end = end
+    while remaining > 0:
+        span = min(chunk_days, remaining)
+        cur_start = cur_end - dt.timedelta(days=span - 1)
+        chunks.append((cur_start, cur_end))
+        remaining -= span
+        cur_end = cur_start - dt.timedelta(days=1)
+    return list(reversed(chunks))
+
+
+def _backward_time_windows_unbounded(
+    chunk_days: int, end: dt.date, n_chunks: int
+) -> List[tuple[dt.date, dt.date]]:
+    chunks: List[tuple[dt.date, dt.date]] = []
+    cur_end = end
+    for _ in range(max(1, n_chunks)):
+        cur_start = cur_end - dt.timedelta(days=chunk_days - 1)
+        chunks.append((cur_start, cur_end))
+        cur_end = cur_start - dt.timedelta(days=1)
+    return list(reversed(chunks))
+
+
+def _approx_preset_span_days(preset: str, today: dt.date) -> Optional[int]:
+    """Días aproximados del preset; None = histórico largo (maximum / data_maximum)."""
+    if preset in ("maximum", "data_maximum"):
+        return None
+    if preset == "last_year":
+        return 366
+    if preset == "last_90d":
+        return 90
+    if preset == "last_quarter":
+        return 93
+    if preset == "this_year":
+        return (today - dt.date(today.year, 1, 1)).days + 1
+    if preset == "this_quarter":
+        q0 = (today.month - 1) // 3
+        start_m = q0 * 3 + 1
+        start = dt.date(today.year, start_m, 1)
+        return (today - start).days + 1
+    raise ValueError(f"_approx_preset_span_days: preset inesperado {preset!r}")
 
 
 def normalize_ad_account_id(raw: str) -> str:
@@ -176,10 +337,19 @@ class MetaMarketingClient:
             raise RuntimeError(_meta_api_error_message(code, str(msg)))
         return data
 
-    def paged(self, path: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    def paged(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        page_limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         params = dict(params or {})
-        params.setdefault("limit", 100)
+        if page_limit is not None:
+            params["limit"] = page_limit
+        else:
+            params.setdefault("limit", 100)
         next_url: Optional[str] = None
         while True:
             if next_url:
@@ -275,7 +445,7 @@ def _row_insight(
 
 
 def run() -> int:
-    token = _env("META_ACCESS_TOKEN")
+    token = _normalize_access_token(_env("META_ACCESS_TOKEN"))
     raw_acct = _env("META_AD_ACCOUNT_ID")
     if not token or not raw_acct:
         missing = [n for n, v in (("META_ACCESS_TOKEN", token), ("META_AD_ACCOUNT_ID", raw_acct)) if not v]
@@ -289,7 +459,9 @@ def run() -> int:
     account_id = normalize_ad_account_id(raw_acct)
     ensure_schema()
     api_version = _env("META_API_VERSION", "v21.0") or "v21.0"
-    date_preset = _env("META_DATE_PRESET", "last_30d") or "last_30d"
+    date_preset = _normalize_insight_date_preset(
+        _env("META_DATE_PRESET", "last_30d") or "last_30d", "META_DATE_PRESET"
+    )
     time_since = _env("META_TIME_RANGE_SINCE")
     time_until = _env("META_TIME_RANGE_UNTIL")
     level = (_env("META_INSIGHTS_LEVEL", "ad") or "ad").lower()
@@ -303,15 +475,29 @@ def run() -> int:
     fields_adsets = "id,campaign_id,name,status"
     fields_ads = "id,name,status,campaign_id,adset_id"
 
+    include_video = (_env("META_INSIGHTS_INCLUDE_VIDEO", "0") or "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
     insight_fields = (
         "date_start,date_stop,campaign_id,adset_id,ad_id,"
         "impressions,clicks,reach,spend,frequency,cpm,cpc,ctr,cpp,"
-        "account_currency,"
-        "actions,cost_per_action_type,"
-        "video_thruplay_watched_actions,"
-        "video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,"
-        "video_p95_watched_actions,video_p100_watched_actions"
+        "account_currency,actions,cost_per_action_type"
     )
+    if include_video:
+        insight_fields += (
+            ",video_thruplay_watched_actions,"
+            "video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,"
+            "video_p95_watched_actions,video_p100_watched_actions"
+        )
+
+    chunk_days = max(1, int(_env("META_INSIGHTS_TIME_CHUNK_DAYS", "31") or "31"))
+    max_ub = max(1, int(_env("META_INSIGHTS_MAX_CHUNKS", "36") or "36"))
+    insights_page_limit = max(
+        1, min(500, int(_env("META_INSIGHTS_PAGE_LIMIT", "25") or "25"))
+    )
+    today = dt.date.today()
 
     print(f"[meta_ads] Fetching campaigns for {account_id}...")
     raw_camps = client.paged(f"{acct_path}/campaigns", {"fields": fields_campaigns})
@@ -362,30 +548,115 @@ def run() -> int:
         ],
     )
 
-    insight_params: Dict[str, Any] = {
+    base_insight: Dict[str, Any] = {
         "level": level,
         "time_increment": 1,
         "fields": insight_fields,
     }
+    insight_fetch_plans: List[tuple[str, Dict[str, Any]]] = []
+    append_rolling_raw = _env("META_APPEND_ROLLING_PRESET")
+    append_rolling_ok = bool(
+        append_rolling_raw
+        and append_rolling_raw.lower() not in ("0", "false", "no", "")
+    )
+    append_rolling: Optional[str] = None
+    if append_rolling_ok:
+        append_rolling = _normalize_insight_date_preset(
+            append_rolling_raw or "last_30d", "META_APPEND_ROLLING_PRESET"
+        )
+
     if time_since and time_until:
-        insight_params["time_range"] = json.dumps(
-            {"since": time_since.strip(), "until": time_until.strip()}
-        )
+        since_d = _parse_date(time_since.strip())
+        until_d = _parse_date(time_until.strip())
+        if since_d is None or until_d is None:
+            raise RuntimeError(
+                "META_TIME_RANGE_SINCE / META_TIME_RANGE_UNTIL deben ser fechas YYYY-MM-DD válidas."
+            )
+        tr_ranges = _chunk_inclusive_ranges(since_d, until_d, chunk_days)
         print(
-            f"[meta_ads] Fetching insights level={level} "
-            f"time_range={time_since}..{time_until}..."
+            "[meta_ads] ATENCION: META_TIME_RANGE_* activo — cada ejecución solo pide ese rango a la API. "
+            "Para datos recientes sin quitar el backfill de 2025, define META_APPEND_ROLLING_PRESET=last_30d "
+            "(o borra META_TIME_RANGE_SINCE/UNTIL tras el backfill y usa solo META_DATE_PRESET)."
         )
+        if len(tr_ranges) > 1:
+            print(
+                f"[meta_ads] Insights: partiendo time_range en {len(tr_ranges)} ventanas "
+                f"(≤{chunk_days} días) para evitar error API #1."
+            )
+        for i, (a, b) in enumerate(tr_ranges):
+            label = f"time_range {a.isoformat()}..{b.isoformat()}"
+            if len(tr_ranges) > 1:
+                label += f" ({i + 1}/{len(tr_ranges)})"
+            insight_fetch_plans.append(
+                (
+                    label,
+                    {
+                        **base_insight,
+                        "time_range": json.dumps(
+                            {"since": a.isoformat(), "until": b.isoformat()}
+                        ),
+                    },
+                )
+            )
+        if append_rolling_ok and append_rolling:
+            p_roll = {**base_insight, "date_preset": append_rolling}
+            insight_fetch_plans.append((f"date_preset {append_rolling} (rolling)", p_roll))
+        else:
+            print(
+                "[meta_ads] Sugerencia: META_APPEND_ROLLING_PRESET=last_30d para también traer la ventana móvil."
+            )
     else:
-        insight_params["date_preset"] = date_preset
-        print(
-            f"[meta_ads] Fetching insights level={level} date_preset={date_preset}..."
-        )
-    raw_insights = client.paged(f"{acct_path}/insights", insight_params)
+        if date_preset in _CHUNKED_DATE_PRESETS:
+            span = _approx_preset_span_days(date_preset, today)
+            if span is None:
+                pranges = _backward_time_windows_unbounded(chunk_days, today, max_ub)
+                print(
+                    f"[meta_ads] Insights: preset {date_preset!r} en {len(pranges)} ventanas "
+                    f"(≤{chunk_days} días, máx. {max_ub} ventanas). Ajusta META_INSIGHTS_MAX_CHUNKS si necesitas más histórico."
+                )
+            elif span > chunk_days:
+                pranges = _backward_time_windows(span, chunk_days, today)
+                print(
+                    f"[meta_ads] Insights: preset {date_preset!r} en {len(pranges)} ventanas "
+                    f"(≤{chunk_days} días)."
+                )
+            else:
+                pranges = []
+            if pranges:
+                for i, (a, b) in enumerate(pranges):
+                    insight_fetch_plans.append(
+                        (
+                            f"date_preset {date_preset} → {a.isoformat()}..{b.isoformat()} "
+                            f"({i + 1}/{len(pranges)})",
+                            {
+                                **base_insight,
+                                "time_range": json.dumps(
+                                    {"since": a.isoformat(), "until": b.isoformat()}
+                                ),
+                            },
+                        )
+                    )
+            else:
+                insight_fetch_plans.append(
+                    (f"date_preset {date_preset}", {**base_insight, "date_preset": date_preset})
+                )
+        else:
+            insight_fetch_plans.append(
+                (f"date_preset {date_preset}", {**base_insight, "date_preset": date_preset})
+            )
+
     insight_rows: List[Dict[str, Any]] = []
-    for x in raw_insights:
-        row = _row_insight(account_id, x, level)
-        if row:
-            insight_rows.append(row)
+    for idx, (label, insight_params) in enumerate(insight_fetch_plans):
+        if idx > 0:
+            time.sleep(0.4)
+        print(f"[meta_ads] Fetching insights level={level} ({label})...")
+        raw_insights = client.paged(
+            f"{acct_path}/insights", insight_params, page_limit=insights_page_limit
+        )
+        for x in raw_insights:
+            row = _row_insight(account_id, x, level)
+            if row:
+                insight_rows.append(row)
 
     upsert_many(
         "meta_ads_insights",

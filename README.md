@@ -30,7 +30,7 @@ python jobs/runner.py
 ## Deploy rápido
 1. Conecta el repo a Railway
 2. Añade el plugin Postgres → copia `DATABASE_URL`
-3. Variables de entorno: `DATABASE_URL`, `GOOGLE_SA_JSON_BASE64`, `SHEETS_SPREADSHEET_ID`, `SHEETS_WORKSHEET_NAME`, `BOOKNETIC_BASE_URL`, `BOOKNETIC_TOKEN`. Opcional: `BOOKNETIC_PLUGIN_MODULE` (p.ej. `plugins.booknetic_adapter_example`).
+3. Variables de entorno: `DATABASE_URL`, `GOOGLE_SA_JSON_BASE64`, `SHEETS_SPREADSHEET_ID`, `SHEETS_WORKSHEET_NAME`, `BOOKNETIC_BASE_URL`, `BOOKNETIC_TOKEN`. Opcional: `BOOKNETIC_PLUGIN_MODULE` (p.ej. `plugins.booknetic_adapter_example`). **Meta Ads → Postgres (DBeaver):** `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`; opcional `META_ADS_INTERVAL` (segundos, default 3600), `META_DATE_PRESET` (ej. `last_90d`, `maximum`; Meta no admite `last_365d` en insights), `META_TIME_RANGE_SINCE` + `META_TIME_RANGE_UNTIL` (`YYYY-MM-DD`, backfill), `META_API_VERSION` (ej. `v21.0`).
 4. Start Command: `python -m jobs.runner`
 5. Ejecuta `sql/schema.sql` y `sql/job_meta.sql` una vez
 
@@ -38,6 +38,7 @@ python jobs/runner.py
 - Booknetic: cada 30 min
 - Sheets Import: cada 10 min
 - **Export Reservas**: cada 15 min (NUEVO) ⭐
+- **Meta Ads** (si configuras token + cuenta): cada 60 min por defecto; tablas `meta_campaigns`, `meta_adsets`, `meta_ads`, `meta_ads_insights`
 
 ## Customización
 - Ajusta columnas de Sheets en `jobs/job_import_sheets.py`

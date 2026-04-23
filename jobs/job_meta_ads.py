@@ -690,6 +690,19 @@ def run() -> int:
         f"[meta_ads] Upserted campaigns={len(camp_rows)} adsets={len(adset_rows)} "
         f"ads={len(ad_rows)} insights={len(insight_rows)}"
     )
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM meta_ads_insights")
+                n_ins = cur.fetchone()[0]
+                cur.execute("SELECT max(fetched_at) FROM meta_ads_insights")
+                mx = cur.fetchone()[0]
+        print(
+            f"[meta_ads] verificación BD: meta_ads_insights count={n_ins} "
+            f"max(fetched_at)={mx}"
+        )
+    except Exception as ex:  # noqa: BLE001
+        print(f"[meta_ads] verificación BD falló: {ex}")
     return total
 
 

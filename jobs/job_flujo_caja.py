@@ -16,6 +16,8 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from psycopg.types.json import Json
+
 from db.connection import get_connection
 
 SHEET_NAME_DEFAULT = "consolidad flujo caja"
@@ -105,18 +107,25 @@ def run() -> int:
                 cur.executemany(
                     """
                     INSERT INTO flujo_caja (id, fila, raw)
-                    VALUES (%(id)s, %(fila)s, %(raw)s::jsonb)
+                    VALUES (%(id)s, %(fila)s, %(raw)s)
                     ON CONFLICT (id) DO UPDATE
                         SET fila = EXCLUDED.fila,
                             raw  = EXCLUDED.raw,
                             synced_at = now()
                     """,
                     [
-                        {**r, "raw": json.dumps(r["raw"], ensure_ascii=False)}
+                        {"id": r["id"], "fila": r["fila"], "raw": Json(r["raw"])}
                         for r in rows_to_insert
                     ],
                 )
         conn.commit()
 
-    print(f"[flujo_caja] Sincronizadas {len(rows_to_insert)} filas")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM flujo_caja")
+            n_db = cur.fetchone()[0]
+    print(
+        f"[flujo_caja] Sincronizadas {len(rows_to_insert)} filas "
+        f"(verificación en BD: count(*)={n_db})"
+    )
     return len(rows_to_insert)

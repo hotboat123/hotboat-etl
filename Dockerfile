@@ -2,6 +2,8 @@
 # Equivalente a python:3.11-slim-bookworm en hub.docker.com.
 FROM public.ecr.aws/docker/library/python:3.11-slim-bookworm
 
+ENV PYTHONUNBUFFERED=1
+
 # Actualizar repositorios e instalar dependencias del sistema para Chromium y Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \

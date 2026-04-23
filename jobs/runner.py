@@ -38,10 +38,8 @@ except Exception as e:
 
 try:
     from jobs.job_flujo_caja import run as run_flujo_caja
-    FLUJO_CAJA_ENABLED = bool(os.getenv("LOOKER_SPREADSHEET_ID"))
 except Exception as e:
     run_flujo_caja = None  # type: ignore[assignment]
-    FLUJO_CAJA_ENABLED = False
     print(f"[runner] Flujo Caja module not available: {e}")
 
 
@@ -105,23 +103,30 @@ def _start_dashboard() -> None:
 
 def main() -> None:
     """Main loop - ejecuta jobs cada X minutos"""
+    print("[runner] iniciando proceso...", flush=True)
     load_env()
-
-    # Iniciar dashboard en hilo de fondo
-    t = threading.Thread(target=_start_dashboard, daemon=True)
-    t.start()
+    print("[runner] variables de entorno listas", flush=True)
 
     meta_ads_enabled = bool(
         os.getenv("META_ACCESS_TOKEN") and os.getenv("META_AD_ACCOUNT_ID")
     ) and (run_meta_ads is not None)
+    flujo_caja_enabled = bool(os.getenv("LOOKER_SPREADSHEET_ID")) and (
+        run_flujo_caja is not None
+    )
 
-    print("="*60)
-    print("HotBoat ETL - Runner")
-    print("="*60)
-    print()
+    print("="*60, flush=True)
+    print("HotBoat ETL - Runner", flush=True)
+    print("="*60, flush=True)
+    print(flush=True)
 
+    print("[runner] comprobando Postgres (migrate + identidad)...", flush=True)
     print_db_identity()
     ensure_schema()
+    print("[runner] Postgres OK", flush=True)
+
+    # Dashboard después de DB: si el pool falla, los logs ya mostraron el error
+    t = threading.Thread(target=_start_dashboard, daemon=True)
+    t.start()
 
     META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))         # 1 h
     FLUJO_CAJA_INTERVAL = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))     # 30 min
@@ -131,10 +136,10 @@ def main() -> None:
         print(f"   - Meta Ads: cada {META_ADS_INTERVAL//60} minutos")
     else:
         print("   - Meta Ads: DESHABILITADO (falta META_ACCESS_TOKEN / META_AD_ACCOUNT_ID o modulo)")
-    if FLUJO_CAJA_ENABLED:
+    if flujo_caja_enabled:
         print(f"   - Flujo Caja: cada {FLUJO_CAJA_INTERVAL//60} minutos")
     else:
-        print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID)")
+        print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID o modulo)")
     print()
 
     failure_tracker = {
@@ -149,7 +154,7 @@ def main() -> None:
         if not success:
             failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
 
-    if FLUJO_CAJA_ENABLED and run_flujo_caja is not None:
+    if flujo_caja_enabled and run_flujo_caja is not None:
         print("Ejecucion inicial de Flujo Caja...")
         success = run_job_safely("flujo_caja_sync", run_flujo_caja)
         if not success:
@@ -190,7 +195,7 @@ def main() -> None:
                     failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
 
             # Flujo Caja
-            if FLUJO_CAJA_ENABLED and run_flujo_caja is not None and current_time - last_flujo_caja_run >= FLUJO_CAJA_INTERVAL:
+            if flujo_caja_enabled and run_flujo_caja is not None and current_time - last_flujo_caja_run >= FLUJO_CAJA_INTERVAL:
                 success = run_job_safely("flujo_caja_sync", run_flujo_caja)
                 last_flujo_caja_run = current_time
                 if success:
@@ -211,7 +216,7 @@ def main() -> None:
                 hints.append(
                     f"Meta Ads en ~{max(0, int(sec // 60))}m ({(dt.datetime.now() + dt.timedelta(seconds=max(sec, 0))).strftime('%H:%M')})"
                 )
-            if FLUJO_CAJA_ENABLED and run_flujo_caja is not None:
+            if flujo_caja_enabled and run_flujo_caja is not None:
                 sec = FLUJO_CAJA_INTERVAL - (current_time - last_flujo_caja_run)
                 hints.append(
                     f"Flujo Caja en ~{max(0, int(sec // 60))}m"
@@ -231,4 +236,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+
+        traceback.print_exc()
+        raise

@@ -19,11 +19,9 @@ STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 JOB_LABELS: Dict[str, str] = {
-    "meta_ads_sync":          "Meta Ads (Marketing)",
-    "flujo_caja_sync":        "Flujo de Caja",
-    "sheets_import":          "Google Sheets",
-    "export_reservas_sheets": "Export Reservas → Sheets",
-    "booknetic_scrape":       "Booknetic",
+    "meta_ads_sync":    "Meta Ads (Marketing)",
+    "flujo_caja_sync":  "Flujo de Caja",
+    "booknetic_scrape": "Booknetic",
 }
 
 

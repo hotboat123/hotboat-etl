@@ -2,8 +2,9 @@
 Runner simple SIN APScheduler - usa loop + sleep
 Compatible con Railway y más confiable
 
-Jobs: Sheets, export reservas, Meta Ads, Flujo Caja (según env).
-Booknetic no se ejecuta aquí; para scrape manual: BOOKNETIC_SYNC_ENABLED=1 y python -m jobs.job_scrape_booknetic.
+Jobs: Meta Ads, Flujo Caja (según env).
+Sheets / Informacion Reserva / Stock / Precios Extras / export Reservas_Con_Extras_Sheets no se ejecutan aquí;
+para import manual: python -m jobs.job_import_sheets. Booknetic: BOOKNETIC_SYNC_ENABLED=1 y python -m jobs.job_scrape_booknetic.
 """
 import os
 import sys
@@ -28,22 +29,6 @@ try:
 except ImportError:
     DOTENV_AVAILABLE = False
     print("[env] python-dotenv not available - using system env vars only (OK for Railway)")
-
-# Importar sheets solo si está configurado
-try:
-    from jobs.job_import_sheets import run as run_sheets
-    SHEETS_ENABLED = True
-except Exception:
-    SHEETS_ENABLED = False
-    print("[runner] Google Sheets import disabled (missing config)")
-
-# Importar export de reservas a sheets
-try:
-    from jobs.export_reservas_to_sheets import run as run_export_reservas
-    EXPORT_RESERVAS_ENABLED = True
-except Exception as e:
-    EXPORT_RESERVAS_ENABLED = False
-    print(f"[runner] Export Reservas to Sheets disabled: {e}")
 
 try:
     from jobs.job_meta_ads import run as run_meta_ads
@@ -138,20 +123,10 @@ def main() -> None:
     print_db_identity()
     ensure_schema()
 
-    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))              # 10 min
-    EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900"))  # 15 min
     META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))         # 1 h
     FLUJO_CAJA_INTERVAL = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))     # 30 min
 
     print("Configuracion:")
-    if SHEETS_ENABLED:
-        print(f"   - Sheets: cada {SHEETS_INTERVAL//60} minutos")
-    else:
-        print("   - Sheets: DESHABILITADO")
-    if EXPORT_RESERVAS_ENABLED:
-        print(f"   - Export Reservas: cada {EXPORT_RESERVAS_INTERVAL//60} minutos")
-    else:
-        print("   - Export Reservas: DESHABILITADO")
     if meta_ads_enabled:
         print(f"   - Meta Ads: cada {META_ADS_INTERVAL//60} minutos")
     else:
@@ -163,8 +138,6 @@ def main() -> None:
     print()
 
     failure_tracker = {
-        "sheets_import": {"consecutive_failures": 0},
-        "export_reservas_sheets": {"consecutive_failures": 0},
         "meta_ads_sync": {"consecutive_failures": 0},
         "flujo_caja_sync": {"consecutive_failures": 0},
     }
@@ -182,8 +155,6 @@ def main() -> None:
         if not success:
             failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
 
-    last_sheets_run = time.time()
-    last_export_reservas_run = time.time()
     last_meta_ads_run = time.time()
     last_flujo_caja_run = time.time()
 
@@ -195,43 +166,6 @@ def main() -> None:
     try:
         while True:
             current_time = time.time()
-
-            # Sheets
-            if SHEETS_ENABLED and current_time - last_sheets_run >= SHEETS_INTERVAL:
-                success = run_job_safely("sheets_import", run_sheets)
-                last_sheets_run = current_time
-                if success:
-                    if failure_tracker["sheets_import"]["consecutive_failures"] >= 3:
-                        try:
-                            from utils.notifications import notify_success_after_failure
-                            notify_success_after_failure("sheets_import",
-                                failure_tracker["sheets_import"]["consecutive_failures"])
-                        except Exception:
-                            pass
-                    failure_tracker["sheets_import"]["consecutive_failures"] = 0
-                else:
-                    failure_tracker["sheets_import"]["consecutive_failures"] += 1
-
-            # Export Reservas
-            if EXPORT_RESERVAS_ENABLED and current_time - last_export_reservas_run >= EXPORT_RESERVAS_INTERVAL:
-                try:
-                    success = run_job_safely("export_reservas_sheets", run_export_reservas)
-                    last_export_reservas_run = current_time
-                    if success:
-                        if failure_tracker["export_reservas_sheets"]["consecutive_failures"] >= 3:
-                            try:
-                                from utils.notifications import notify_success_after_failure
-                                notify_success_after_failure("export_reservas_sheets",
-                                    failure_tracker["export_reservas_sheets"]["consecutive_failures"])
-                            except Exception:
-                                pass
-                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] = 0
-                    else:
-                        failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
-                except Exception as e:
-                    print(f"[runner] Error ejecutando export_reservas_sheets: {e}")
-                    failure_tracker["export_reservas_sheets"]["consecutive_failures"] += 1
-                    last_export_reservas_run = current_time
 
             # Meta Ads
             if (
@@ -271,9 +205,21 @@ def main() -> None:
                 else:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
 
-            time_to_next = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
-            next_run = dt.datetime.now() + dt.timedelta(seconds=max(time_to_next, 0))
-            print(f"Esperando... Proxima ejecucion Meta Ads: {next_run.strftime('%H:%M:%S')}")
+            hints: list[str] = []
+            if meta_ads_enabled and run_meta_ads is not None:
+                sec = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
+                hints.append(
+                    f"Meta Ads en ~{max(0, int(sec // 60))}m ({(dt.datetime.now() + dt.timedelta(seconds=max(sec, 0))).strftime('%H:%M')})"
+                )
+            if FLUJO_CAJA_ENABLED and run_flujo_caja is not None:
+                sec = FLUJO_CAJA_INTERVAL - (current_time - last_flujo_caja_run)
+                hints.append(
+                    f"Flujo Caja en ~{max(0, int(sec // 60))}m"
+                )
+            if hints:
+                print("Esperando... " + " | ".join(hints))
+            else:
+                print("Esperando... (sin jobs programados en loop, poll 60s)")
 
             time.sleep(60)
 

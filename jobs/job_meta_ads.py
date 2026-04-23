@@ -7,7 +7,7 @@ Requires env:
 
 Optional:
   META_API_VERSION    Default v21.0
-  META_DATE_PRESET    Default last_30d (ej. last_90d, last_365d). Ignorado si defines rango explícito.
+  META_DATE_PRESET    Default last_30d. Valores válidos: last_7d, last_30d, last_90d, maximum, last_year, etc. (Meta no admite last_365d; se mapea a maximum).
   META_TIME_RANGE_SINCE / META_TIME_RANGE_UNTIL  YYYY-MM-DD (ambas obligatorias). Usa time_range en la API.
     Sin META_APPEND_ROLLING_PRESET, cada sync solo pide ese rango (ej. 2025) y no actualiza el mes actual.
   META_APPEND_ROLLING_PRESET  Ej. last_30d: si usas time_range, hace una 2ª petición con este date_preset para mezclar datos recientes.
@@ -133,6 +133,59 @@ def _env(name: str, default: Optional[str] = None) -> Optional[str]:
     if v is None or str(v).strip() == "":
         return default
     return str(v).strip()
+
+
+# date_preset permitido por Meta en /insights (error #100 si falla)
+_VALID_INSIGHT_DATE_PRESETS = frozenset(
+    {
+        "today",
+        "yesterday",
+        "this_month",
+        "last_month",
+        "this_quarter",
+        "maximum",
+        "data_maximum",
+        "last_3d",
+        "last_7d",
+        "last_14d",
+        "last_28d",
+        "last_30d",
+        "last_90d",
+        "last_week_mon_sun",
+        "last_week_sun_sat",
+        "last_quarter",
+        "last_year",
+        "this_week_mon_today",
+        "this_week_sun_today",
+        "this_year",
+    }
+)
+
+# Valores que la gente suele poner pero Meta no acepta en insights
+_ALIAS_INSIGHT_DATE_PRESET = {
+    "last_365d": "maximum",
+    "last_60d": "last_90d",
+    "last_180d": "last_90d",
+}
+
+
+def _normalize_insight_date_preset(value: str, env_name: str) -> str:
+    v = (value or "last_30d").strip()
+    key = v.lower()
+    if key in _ALIAS_INSIGHT_DATE_PRESET:
+        repl = _ALIAS_INSIGHT_DATE_PRESET[key]
+        print(
+            f"[meta_ads] AVISO: {env_name}={v!r} no es válido en Insights API; "
+            f"usando {repl!r}. Para más histórico usa maximum/data_maximum o META_TIME_RANGE_*."
+        )
+        v = repl
+    if v in _VALID_INSIGHT_DATE_PRESETS:
+        return v
+    raise RuntimeError(
+        f"{env_name}={value!r} no es un date_preset válido para insights. "
+        f"Ej.: last_7d, last_30d, last_90d, maximum, last_year. "
+        f"(Lista oficial en error #100 de la API Meta.)"
+    )
 
 
 def normalize_ad_account_id(raw: str) -> str:
@@ -308,7 +361,9 @@ def run() -> int:
     account_id = normalize_ad_account_id(raw_acct)
     ensure_schema()
     api_version = _env("META_API_VERSION", "v21.0") or "v21.0"
-    date_preset = _env("META_DATE_PRESET", "last_30d") or "last_30d"
+    date_preset = _normalize_insight_date_preset(
+        _env("META_DATE_PRESET", "last_30d") or "last_30d", "META_DATE_PRESET"
+    )
     time_since = _env("META_TIME_RANGE_SINCE")
     time_until = _env("META_TIME_RANGE_UNTIL")
     level = (_env("META_INSIGHTS_LEVEL", "ad") or "ad").lower()
@@ -387,10 +442,16 @@ def run() -> int:
         "fields": insight_fields,
     }
     insight_fetch_plans: List[tuple[str, Dict[str, Any]]] = []
-    append_rolling = _env("META_APPEND_ROLLING_PRESET")
+    append_rolling_raw = _env("META_APPEND_ROLLING_PRESET")
     append_rolling_ok = bool(
-        append_rolling and append_rolling.lower() not in ("0", "false", "no", "")
+        append_rolling_raw
+        and append_rolling_raw.lower() not in ("0", "false", "no", "")
     )
+    append_rolling: Optional[str] = None
+    if append_rolling_ok:
+        append_rolling = _normalize_insight_date_preset(
+            append_rolling_raw or "last_30d", "META_APPEND_ROLLING_PRESET"
+        )
 
     if time_since and time_until:
         p_tr: Dict[str, Any] = {
@@ -407,7 +468,7 @@ def run() -> int:
             "Para datos recientes sin quitar el backfill de 2025, define META_APPEND_ROLLING_PRESET=last_30d "
             "(o borra META_TIME_RANGE_SINCE/UNTIL tras el backfill y usa solo META_DATE_PRESET)."
         )
-        if append_rolling_ok:
+        if append_rolling_ok and append_rolling:
             p_roll = {**base_insight, "date_preset": append_rolling}
             insight_fetch_plans.append((f"date_preset {append_rolling} (rolling)", p_roll))
         else:

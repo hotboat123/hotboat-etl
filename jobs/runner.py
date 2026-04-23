@@ -47,6 +47,14 @@ except Exception as e:
     run_meta_ads = None  # type: ignore[assignment]
     print(f"[runner] Meta Ads module not available: {e}")
 
+try:
+    from jobs.job_flujo_caja import run as run_flujo_caja
+    FLUJO_CAJA_ENABLED = bool(os.getenv("LOOKER_SPREADSHEET_ID"))
+except Exception as e:
+    run_flujo_caja = None  # type: ignore[assignment]
+    FLUJO_CAJA_ENABLED = False
+    print(f"[runner] Flujo Caja module not available: {e}")
+
 
 def load_env() -> None:
     """Load environment variables"""
@@ -110,9 +118,10 @@ def main() -> None:
     print_db_identity()
     ensure_schema()
 
-    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))          # 10 min
+    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))              # 10 min
     EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900"))  # 15 min
-    META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))     # 1 h
+    META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))         # 1 h
+    FLUJO_CAJA_INTERVAL = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))     # 30 min
 
     print("Configuracion:")
     if SHEETS_ENABLED:
@@ -127,12 +136,17 @@ def main() -> None:
         print(f"   - Meta Ads: cada {META_ADS_INTERVAL//60} minutos")
     else:
         print("   - Meta Ads: DESHABILITADO (falta META_ACCESS_TOKEN / META_AD_ACCOUNT_ID o modulo)")
+    if FLUJO_CAJA_ENABLED:
+        print(f"   - Flujo Caja: cada {FLUJO_CAJA_INTERVAL//60} minutos")
+    else:
+        print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID)")
     print()
 
     failure_tracker = {
         "sheets_import": {"consecutive_failures": 0},
         "export_reservas_sheets": {"consecutive_failures": 0},
         "meta_ads_sync": {"consecutive_failures": 0},
+        "flujo_caja_sync": {"consecutive_failures": 0},
     }
 
     # --- Ejecución inicial ---
@@ -142,9 +156,16 @@ def main() -> None:
         if not success:
             failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
 
+    if FLUJO_CAJA_ENABLED and run_flujo_caja is not None:
+        print("Ejecucion inicial de Flujo Caja...")
+        success = run_job_safely("flujo_caja_sync", run_flujo_caja)
+        if not success:
+            failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
     last_sheets_run = time.time()
     last_export_reservas_run = time.time()
     last_meta_ads_run = time.time()
+    last_flujo_caja_run = time.time()
 
     print("\n" + "="*60)
     print("Loop iniciado - Esperando proximas ejecuciones...")
@@ -213,6 +234,22 @@ def main() -> None:
                     failure_tracker["meta_ads_sync"]["consecutive_failures"] = 0
                 else:
                     failure_tracker["meta_ads_sync"]["consecutive_failures"] += 1
+
+            # Flujo Caja
+            if FLUJO_CAJA_ENABLED and run_flujo_caja is not None and current_time - last_flujo_caja_run >= FLUJO_CAJA_INTERVAL:
+                success = run_job_safely("flujo_caja_sync", run_flujo_caja)
+                last_flujo_caja_run = current_time
+                if success:
+                    if failure_tracker["flujo_caja_sync"]["consecutive_failures"] >= 3:
+                        try:
+                            from utils.notifications import notify_success_after_failure
+                            notify_success_after_failure("flujo_caja_sync",
+                                failure_tracker["flujo_caja_sync"]["consecutive_failures"])
+                        except Exception:
+                            pass
+                    failure_tracker["flujo_caja_sync"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
 
             time_to_next = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
             next_run = dt.datetime.now() + dt.timedelta(seconds=max(time_to_next, 0))

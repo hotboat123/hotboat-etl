@@ -1,6 +1,9 @@
 """
 Runner simple SIN APScheduler - usa loop + sleep
 Compatible con Railway y más confiable
+
+Jobs: Sheets, export reservas, Meta Ads, Flujo Caja (según env).
+Booknetic no se ejecuta aquí; para scrape manual: BOOKNETIC_SYNC_ENABLED=1 y python -m jobs.job_scrape_booknetic.
 """
 import os
 import sys

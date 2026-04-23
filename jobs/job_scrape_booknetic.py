@@ -1,3 +1,9 @@
+"""
+Booknetic → Postgres (export/scrape).
+
+Deshabilitado por defecto: no descarga ni toca tablas salvo que definas
+BOOKNETIC_SYNC_ENABLED=1 (true/yes/on). El runner (jobs.runner) ya no programa este job.
+"""
 import hashlib
 import importlib
 import os
@@ -174,6 +180,14 @@ def _sanitize_payment_dates(payments: List[Dict[str, Any]]) -> int:
 
 
 def run() -> int:
+    sync = (os.getenv("BOOKNETIC_SYNC_ENABLED") or "").strip().lower()
+    if sync not in ("1", "true", "yes", "on"):
+        print(
+            "[booknetic] Omitido: scrape desactivado. Para ejecutarlo, define "
+            "BOOKNETIC_SYNC_ENABLED=1 (este proyecto ya no lo corre en el runner)."
+        )
+        return 0
+
     data = _fetch_booknetic()
     
     # Handle different return formats

@@ -107,4 +107,83 @@ create trigger trg_precios_extras_updated_at
 before update on "Precios Extras"
 for each row execute procedure set_updated_at();
 
+-- Meta Ads (Marketing API; synced by jobs/job_meta_ads.py)
+create table if not exists meta_campaigns (
+    id text primary key,
+    ad_account_id text not null,
+    name text,
+    status text,
+    objective text,
+    raw jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_meta_campaigns_updated_at on meta_campaigns;
+create trigger trg_meta_campaigns_updated_at
+before update on meta_campaigns
+for each row execute procedure set_updated_at();
+
+create table if not exists meta_adsets (
+    id text primary key,
+    ad_account_id text not null,
+    campaign_id text,
+    name text,
+    status text,
+    raw jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_meta_adsets_updated_at on meta_adsets;
+create trigger trg_meta_adsets_updated_at
+before update on meta_adsets
+for each row execute procedure set_updated_at();
+
+create table if not exists meta_ads (
+    id text primary key,
+    ad_account_id text not null,
+    campaign_id text,
+    adset_id text,
+    name text,
+    status text,
+    raw jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+drop trigger if exists trg_meta_ads_updated_at on meta_ads;
+create trigger trg_meta_ads_updated_at
+before update on meta_ads
+for each row execute procedure set_updated_at();
+
+create table if not exists meta_ads_insights (
+    ad_id text not null,
+    date_start date not null,
+    date_stop date,
+    ad_account_id text,
+    campaign_id text,
+    adset_id text,
+    impressions bigint,
+    clicks bigint,
+    reach bigint,
+    spend numeric,
+    frequency numeric,
+    cpm numeric,
+    cpc numeric,
+    ctr numeric,
+    cpp numeric,
+    actions jsonb,
+    cost_per_action_type jsonb,
+    raw jsonb,
+    fetched_at timestamptz not null default now(),
+    primary key (ad_id, date_start)
+);
+
+create index if not exists idx_meta_ads_insights_campaign_date
+on meta_ads_insights (campaign_id, date_start desc);
+
+create index if not exists idx_meta_ads_insights_date
+on meta_ads_insights (date_start desc);
+
 

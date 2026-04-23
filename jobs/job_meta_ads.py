@@ -9,6 +9,8 @@ Optional:
   META_API_VERSION    Default v21.0
   META_DATE_PRESET    Default last_30d (ej. last_90d, last_365d). Ignorado si defines rango explícito.
   META_TIME_RANGE_SINCE / META_TIME_RANGE_UNTIL  YYYY-MM-DD (ambas obligatorias). Usa time_range en la API.
+    Sin META_APPEND_ROLLING_PRESET, cada sync solo pide ese rango (ej. 2025) y no actualiza el mes actual.
+  META_APPEND_ROLLING_PRESET  Ej. last_30d: si usas time_range, hace una 2ª petición con este date_preset para mezclar datos recientes.
   META_INSIGHTS_LEVEL Default ad  (campaign | adset | ad)
   META_SYNC_MARKETING_COSTS_TABLE  Default 1: tras insights, rellena tabla marketing_costs desde meta_ads_insights. 0 para desactivar.
 """
@@ -100,13 +102,30 @@ def _sync_marketing_costs_from_meta() -> None:
 
 def _meta_api_error_message(code: Any, msg: str) -> str:
     base = f"Meta API error {code}: {msg}"
-    if code == 190 or (isinstance(msg, str) and "expired" in msg.lower() and "token" in msg.lower()):
+    sm = str(msg).lower() if msg else ""
+    if code == 190 and "parse" in sm:
+        return (
+            f"{base} — Revisa META_ACCESS_TOKEN: una sola línea, sin comillas extra ni espacios raros al inicio/fin; "
+            f"regenera el token si hace falta."
+        )
+    if code == 190 or ("expired" in sm and "token" in sm):
         return (
             f"{base} — Token caducado o inválido. Genera uno nuevo en el Explorador Graph "
             f"(permiso ads_read) y actualiza META_ACCESS_TOKEN en .env / Railway. "
             f"Los tokens de corta duración caducan en ~1–2 h; en producción usa token de larga duración."
         )
     return base
+
+
+def _normalize_access_token(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    t = str(raw).strip()
+    if (t.startswith('"') and t.endswith('"')) or (t.startswith("'") and t.endswith("'")):
+        t = t[1:-1].strip()
+    if "\n" in t or "\r" in t:
+        print("[meta_ads] ADVERTENCIA: META_ACCESS_TOKEN contiene saltos de línea; debe ser una sola línea.")
+    return t or None
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -275,7 +294,7 @@ def _row_insight(
 
 
 def run() -> int:
-    token = _env("META_ACCESS_TOKEN")
+    token = _normalize_access_token(_env("META_ACCESS_TOKEN"))
     raw_acct = _env("META_AD_ACCOUNT_ID")
     if not token or not raw_acct:
         missing = [n for n, v in (("META_ACCESS_TOKEN", token), ("META_AD_ACCOUNT_ID", raw_acct)) if not v]
@@ -362,30 +381,50 @@ def run() -> int:
         ],
     )
 
-    insight_params: Dict[str, Any] = {
+    base_insight: Dict[str, Any] = {
         "level": level,
         "time_increment": 1,
         "fields": insight_fields,
     }
+    insight_fetch_plans: List[tuple[str, Dict[str, Any]]] = []
+    append_rolling = _env("META_APPEND_ROLLING_PRESET")
+    append_rolling_ok = bool(
+        append_rolling and append_rolling.lower() not in ("0", "false", "no", "")
+    )
+
     if time_since and time_until:
-        insight_params["time_range"] = json.dumps(
-            {"since": time_since.strip(), "until": time_until.strip()}
+        p_tr: Dict[str, Any] = {
+            **base_insight,
+            "time_range": json.dumps(
+                {"since": time_since.strip(), "until": time_until.strip()}
+            ),
+        }
+        insight_fetch_plans.append(
+            (f"time_range {time_since}..{time_until}", p_tr)
         )
         print(
-            f"[meta_ads] Fetching insights level={level} "
-            f"time_range={time_since}..{time_until}..."
+            "[meta_ads] ATENCION: META_TIME_RANGE_* activo — cada ejecución solo pide ese rango a la API. "
+            "Para datos recientes sin quitar el backfill de 2025, define META_APPEND_ROLLING_PRESET=last_30d "
+            "(o borra META_TIME_RANGE_SINCE/UNTIL tras el backfill y usa solo META_DATE_PRESET)."
         )
+        if append_rolling_ok:
+            p_roll = {**base_insight, "date_preset": append_rolling}
+            insight_fetch_plans.append((f"date_preset {append_rolling} (rolling)", p_roll))
+        else:
+            print(
+                "[meta_ads] Sugerencia: META_APPEND_ROLLING_PRESET=last_30d para también traer la ventana móvil."
+            )
     else:
-        insight_params["date_preset"] = date_preset
-        print(
-            f"[meta_ads] Fetching insights level={level} date_preset={date_preset}..."
-        )
-    raw_insights = client.paged(f"{acct_path}/insights", insight_params)
+        insight_fetch_plans.append((f"date_preset {date_preset}", {**base_insight, "date_preset": date_preset}))
+
     insight_rows: List[Dict[str, Any]] = []
-    for x in raw_insights:
-        row = _row_insight(account_id, x, level)
-        if row:
-            insight_rows.append(row)
+    for label, insight_params in insight_fetch_plans:
+        print(f"[meta_ads] Fetching insights level={level} ({label})...")
+        raw_insights = client.paged(f"{acct_path}/insights", insight_params)
+        for x in raw_insights:
+            row = _row_insight(account_id, x, level)
+            if row:
+                insight_rows.append(row)
 
     upsert_many(
         "meta_ads_insights",

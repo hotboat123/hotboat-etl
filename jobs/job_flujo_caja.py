@@ -7,6 +7,10 @@ Requiere en .env / Railway:
 
 Opcional:
   FLUJO_CAJA_SHEET_NAME     Nombre exacto de la hoja (default: "consolidad flujo caja")
+
+Tablas:
+  flujo_caja         id, fila, raw (jsonb) — espejo técnico
+  flujo_caja_actual  mismas filas con columnas planas = claves de raw (regenerada cada sync)
 """
 from __future__ import annotations
 
@@ -14,13 +18,34 @@ import base64
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Tuple
 
 from psycopg.types.json import Json
 
 from db.connection import get_connection
 
 SHEET_NAME_DEFAULT = "consolidad flujo caja"
+
+# Columnas fijas de flujo_caja_actual; no pueden chocar con slugs de la hoja
+_RESERVED_ACTUAL_COLS = frozenset({"id", "fila", "synced_at"})
+
+
+def _column_slugs(headers: List[str]) -> List[str]:
+    """Encabezados de hoja → identificadores SQL únicos (solo [a-z0-9_])."""
+    seen: Dict[str, int] = {}
+    out: List[str] = []
+    for h in headers:
+        base = re.sub(r"[^a-zA-Z0-9]+", "_", h.strip()).strip("_").lower() or "columna"
+        if base[0].isdigit():
+            base = "c_" + base
+        if base in _RESERVED_ACTUAL_COLS:
+            base = "h_" + base
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        slug = base if n == 1 else f"{base}_{n}"
+        out.append(slug)
+    return out
 
 
 def _get_gspread_client():
@@ -100,6 +125,26 @@ def run() -> int:
 
     print(f"[flujo_caja] {len(rows_to_insert)} filas a sincronizar")
 
+    slugs = _column_slugs(headers)
+    slug_cols_sql = ", ".join(slugs)
+    insert_actual_sql = (
+        f"INSERT INTO flujo_caja_actual (id, fila, synced_at, {slug_cols_sql}) "
+        f"VALUES (%s, %s, now(), {', '.join(['%s'] * len(slugs))})"
+    )
+
+    def _actual_row_tuple(r: Dict[str, Any]) -> Tuple[Any, ...]:
+        rec = r["raw"]
+        cells: List[Any] = []
+        for h in headers:
+            v = rec.get(h, "")
+            if v is None:
+                cells.append("")
+            elif isinstance(v, (dict, list)):
+                cells.append(json.dumps(v, ensure_ascii=False))
+            else:
+                cells.append(str(v))
+        return (r["id"], r["fila"], *cells)
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("TRUNCATE TABLE flujo_caja RESTART IDENTITY")
@@ -118,14 +163,45 @@ def run() -> int:
                         for r in rows_to_insert
                     ],
                 )
+
+            cur.execute("DROP TABLE IF EXISTS flujo_caja_actual")
+            if slugs:
+                cur.execute(
+                    f"""
+                    CREATE TABLE flujo_caja_actual (
+                        id text PRIMARY KEY,
+                        fila integer NOT NULL,
+                        synced_at timestamptz NOT NULL DEFAULT now(),
+                        {', '.join(f'{s} text' for s in slugs)}
+                    )
+                    """
+                )
+                if rows_to_insert:
+                    cur.executemany(
+                        insert_actual_sql,
+                        [_actual_row_tuple(r) for r in rows_to_insert],
+                    )
+            else:
+                cur.execute(
+                    """
+                    CREATE TABLE flujo_caja_actual (
+                        id text PRIMARY KEY,
+                        fila integer NOT NULL,
+                        synced_at timestamptz NOT NULL DEFAULT now()
+                    )
+                    """
+                )
+
         conn.commit()
 
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM flujo_caja")
             n_db = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM flujo_caja_actual")
+            n_act = cur.fetchone()[0]
     print(
         f"[flujo_caja] Sincronizadas {len(rows_to_insert)} filas "
-        f"(verificación en BD: count(*)={n_db})"
+        f"(verificación: flujo_caja={n_db}, flujo_caja_actual={n_act})"
     )
     return len(rows_to_insert)

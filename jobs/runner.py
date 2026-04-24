@@ -210,22 +210,6 @@ def main() -> None:
                 else:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
 
-            hints: list[str] = []
-            if meta_ads_enabled and run_meta_ads is not None:
-                sec = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
-                hints.append(
-                    f"Meta Ads en ~{max(0, int(sec // 60))}m ({(dt.datetime.now() + dt.timedelta(seconds=max(sec, 0))).strftime('%H:%M')})"
-                )
-            if flujo_caja_enabled and run_flujo_caja is not None:
-                sec = FLUJO_CAJA_INTERVAL - (current_time - last_flujo_caja_run)
-                hints.append(
-                    f"Flujo Caja en ~{max(0, int(sec // 60))}m"
-                )
-            if hints:
-                print("Esperando... " + " | ".join(hints))
-            else:
-                print("Esperando... (sin jobs programados en loop, poll 60s)")
-
             time.sleep(60)
 
     except (KeyboardInterrupt, SystemExit):

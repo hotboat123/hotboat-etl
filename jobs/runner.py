@@ -69,7 +69,7 @@ except Exception as e:
 
 try:
     from jobs.job_collect_traffic import run as run_collect_traffic
-    TRAFFIC_ENABLED = bool(os.getenv("GOOGLE_MAPS_API_KEY"))
+    TRAFFIC_ENABLED = bool(os.getenv("TOMTOM_API_KEY"))
 except Exception as e:
     run_collect_traffic = None  # type: ignore[assignment]
     TRAFFIC_ENABLED = False
@@ -194,7 +194,7 @@ def main() -> None:
     if TRAFFIC_ENABLED:
         print(f"   - Tráfico Pucón: cada {TRAFFIC_INTERVAL//60} minutos")
     else:
-        print("   - Tráfico Pucón: DESHABILITADO (falta GOOGLE_MAPS_API_KEY)")
+        print("   - Tráfico Pucón: DESHABILITADO (falta TOMTOM_API_KEY)")
     if FLOW_INDEX_ENABLED:
         print(f"   - Flujo Turístico Index: cada {FLOW_INDEX_INTERVAL//60} minutos")
     print()

@@ -86,11 +86,13 @@ Sistema para estimar la demanda turística en Pucón y generar un "semáforo de 
 ### Variables de entorno requeridas
 
 ```
-# Clima (OpenWeather - free tier disponible en openweathermap.org)
+# Clima — gratis, solo necesitas crear cuenta con email
+# Registro: https://openweathermap.org/api → "Get API key"
 OPENWEATHER_API_KEY=...
 
-# Tráfico (Google Maps Platform - Distance Matrix API, requiere billing activado)
-GOOGLE_MAPS_API_KEY=...
+# Tráfico — gratis (2.500 llamadas/día), solo necesitas crear cuenta con email
+# Registro: https://developer.tomtom.com → "Get a free API key"
+TOMTOM_API_KEY=...
 ```
 
 ### Variables de entorno opcionales (intervalos)

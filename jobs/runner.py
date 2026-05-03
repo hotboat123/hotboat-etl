@@ -59,6 +59,30 @@ except Exception as e:
     FLUJO_CAJA_ENABLED = False
     print(f"[runner] Flujo Caja module not available: {e}")
 
+try:
+    from jobs.job_collect_weather import run as run_collect_weather
+    WEATHER_ENABLED = bool(os.getenv("OPENWEATHER_API_KEY"))
+except Exception as e:
+    run_collect_weather = None  # type: ignore[assignment]
+    WEATHER_ENABLED = False
+    print(f"[runner] Weather module not available: {e}")
+
+try:
+    from jobs.job_collect_traffic import run as run_collect_traffic
+    TRAFFIC_ENABLED = bool(os.getenv("GOOGLE_MAPS_API_KEY"))
+except Exception as e:
+    run_collect_traffic = None  # type: ignore[assignment]
+    TRAFFIC_ENABLED = False
+    print(f"[runner] Traffic module not available: {e}")
+
+try:
+    from jobs.job_pucon_flow_index import run as run_pucon_flow_index
+    FLOW_INDEX_ENABLED = True
+except Exception as e:
+    run_pucon_flow_index = None  # type: ignore[assignment]
+    FLOW_INDEX_ENABLED = False
+    print(f"[runner] Pucon Flow Index module not available: {e}")
+
 
 def load_env() -> None:
     """Load environment variables"""
@@ -138,10 +162,13 @@ def main() -> None:
     print_db_identity()
     ensure_schema()
 
-    SHEETS_INTERVAL = int(os.getenv("SHEETS_INTERVAL", "600"))              # 10 min
-    EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900"))  # 15 min
-    META_ADS_INTERVAL = int(os.getenv("META_ADS_INTERVAL", "3600"))         # 1 h
-    FLUJO_CAJA_INTERVAL = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))     # 30 min
+    SHEETS_INTERVAL         = int(os.getenv("SHEETS_INTERVAL", "600"))           # 10 min
+    EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900")) # 15 min
+    META_ADS_INTERVAL       = int(os.getenv("META_ADS_INTERVAL", "3600"))        # 1 h
+    FLUJO_CAJA_INTERVAL     = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))      # 30 min
+    WEATHER_INTERVAL        = int(os.getenv("WEATHER_INTERVAL", "3600"))         # 1 h
+    TRAFFIC_INTERVAL        = int(os.getenv("TRAFFIC_INTERVAL", "10800"))        # 3 h
+    FLOW_INDEX_INTERVAL     = int(os.getenv("FLOW_INDEX_INTERVAL", "3600"))      # 1 h
 
     print("Configuracion:")
     if SHEETS_ENABLED:
@@ -160,6 +187,16 @@ def main() -> None:
         print(f"   - Flujo Caja: cada {FLUJO_CAJA_INTERVAL//60} minutos")
     else:
         print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID)")
+    if WEATHER_ENABLED:
+        print(f"   - Clima Pucón: cada {WEATHER_INTERVAL//60} minutos")
+    else:
+        print("   - Clima Pucón: DESHABILITADO (falta OPENWEATHER_API_KEY)")
+    if TRAFFIC_ENABLED:
+        print(f"   - Tráfico Pucón: cada {TRAFFIC_INTERVAL//60} minutos")
+    else:
+        print("   - Tráfico Pucón: DESHABILITADO (falta GOOGLE_MAPS_API_KEY)")
+    if FLOW_INDEX_ENABLED:
+        print(f"   - Flujo Turístico Index: cada {FLOW_INDEX_INTERVAL//60} minutos")
     print()
 
     failure_tracker = {
@@ -167,6 +204,9 @@ def main() -> None:
         "export_reservas_sheets": {"consecutive_failures": 0},
         "meta_ads_sync": {"consecutive_failures": 0},
         "flujo_caja_sync": {"consecutive_failures": 0},
+        "collect_weather": {"consecutive_failures": 0},
+        "collect_traffic": {"consecutive_failures": 0},
+        "pucon_flow_index": {"consecutive_failures": 0},
     }
 
     # --- Ejecución inicial ---
@@ -182,10 +222,31 @@ def main() -> None:
         if not success:
             failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
 
+    if WEATHER_ENABLED and run_collect_weather is not None:
+        print("Ejecucion inicial de Clima Pucón...")
+        success = run_job_safely("collect_weather", run_collect_weather)
+        if not success:
+            failure_tracker["collect_weather"]["consecutive_failures"] += 1
+
+    if TRAFFIC_ENABLED and run_collect_traffic is not None:
+        print("Ejecucion inicial de Tráfico Pucón...")
+        success = run_job_safely("collect_traffic", run_collect_traffic)
+        if not success:
+            failure_tracker["collect_traffic"]["consecutive_failures"] += 1
+
+    if FLOW_INDEX_ENABLED and run_pucon_flow_index is not None:
+        print("Ejecucion inicial de Flujo Turístico Index...")
+        success = run_job_safely("pucon_flow_index", run_pucon_flow_index)
+        if not success:
+            failure_tracker["pucon_flow_index"]["consecutive_failures"] += 1
+
     last_sheets_run = time.time()
     last_export_reservas_run = time.time()
     last_meta_ads_run = time.time()
     last_flujo_caja_run = time.time()
+    last_weather_run = time.time()
+    last_traffic_run = time.time()
+    last_flow_index_run = time.time()
 
     print("\n" + "="*60)
     print("Loop iniciado - Esperando proximas ejecuciones...")
@@ -270,6 +331,33 @@ def main() -> None:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] = 0
                 else:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
+            # Clima Pucón
+            if WEATHER_ENABLED and run_collect_weather is not None and current_time - last_weather_run >= WEATHER_INTERVAL:
+                success = run_job_safely("collect_weather", run_collect_weather)
+                last_weather_run = current_time
+                if success:
+                    failure_tracker["collect_weather"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["collect_weather"]["consecutive_failures"] += 1
+
+            # Tráfico Pucón
+            if TRAFFIC_ENABLED and run_collect_traffic is not None and current_time - last_traffic_run >= TRAFFIC_INTERVAL:
+                success = run_job_safely("collect_traffic", run_collect_traffic)
+                last_traffic_run = current_time
+                if success:
+                    failure_tracker["collect_traffic"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["collect_traffic"]["consecutive_failures"] += 1
+
+            # Índice de flujo turístico
+            if FLOW_INDEX_ENABLED and run_pucon_flow_index is not None and current_time - last_flow_index_run >= FLOW_INDEX_INTERVAL:
+                success = run_job_safely("pucon_flow_index", run_pucon_flow_index)
+                last_flow_index_run = current_time
+                if success:
+                    failure_tracker["pucon_flow_index"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["pucon_flow_index"]["consecutive_failures"] += 1
 
             time_to_next = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
             next_run = dt.datetime.now() + dt.timedelta(seconds=max(time_to_next, 0))

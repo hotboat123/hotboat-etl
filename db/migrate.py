@@ -283,6 +283,81 @@ def ensure_schema() -> None:
 
     _ensure_meta_analytics_view()
     _ensure_marketing_costs_daily_view()
+    _ensure_pucon_flow_schema()
+
+
+def _ensure_pucon_flow_schema() -> None:
+    """Crea las tablas del índice de flujo turístico de Pucón."""
+    statements = [
+        """
+        create table if not exists tourism_signal_snapshots (
+            id            bigserial primary key,
+            collected_at  timestamptz not null,
+            target_date   date        not null,
+            source_type   text        not null,
+            source_name   text        not null,
+            metric_name   text        not null,
+            metric_value  numeric,
+            metric_unit   text,
+            raw_payload   jsonb,
+            status        text        not null default 'ok',
+            error_message text,
+            created_at    timestamptz not null default now(),
+            unique (collected_at, source_type, metric_name, target_date)
+        );
+        """,
+        """
+        create index if not exists idx_tourism_signals_date_type
+            on tourism_signal_snapshots (target_date desc, source_type);
+        """,
+        """
+        create index if not exists idx_tourism_signals_collected
+            on tourism_signal_snapshots (collected_at desc);
+        """,
+        """
+        create table if not exists pucon_flow_index (
+            id                         bigserial primary key,
+            calculated_at              timestamptz not null,
+            target_date                date        not null,
+            lodging_availability_score numeric,
+            lodging_price_score        numeric,
+            traffic_score              numeric,
+            weather_score              numeric,
+            final_flow_score           numeric     not null,
+            flow_level                 text        not null,
+            recommended_action         text,
+            explanation                text,
+            created_at                 timestamptz not null default now(),
+            unique (calculated_at, target_date)
+        );
+        """,
+        """
+        create index if not exists idx_pucon_flow_index_date
+            on pucon_flow_index (target_date desc);
+        """,
+        """
+        create table if not exists source_query_log (
+            id               bigserial primary key,
+            source_name      text        not null,
+            query_type       text        not null,
+            query_params     jsonb,
+            requested_at     timestamptz not null default now(),
+            success          boolean,
+            http_status      integer,
+            error_message    text,
+            response_time_ms integer
+        );
+        """,
+        """
+        create index if not exists idx_source_query_log_source
+            on source_query_log (source_name, requested_at desc);
+        """,
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+        conn.commit()
 
 
 def _ensure_marketing_costs_daily_view() -> None:

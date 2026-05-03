@@ -71,6 +71,81 @@ EXPORT_RESERVAS_SHEETS.md        # Docs técnicas completas (NUEVO)
 demo_export.py                   # Demo de exportación (NUEVO)
 ```
 
+## Índice de Flujo Turístico Pucón
+
+Sistema para estimar la demanda turística en Pucón y generar un "semáforo de marketing" accionable.
+
+### Tablas nuevas
+
+| Tabla | Descripción |
+|---|---|
+| `tourism_signal_snapshots` | Señales brutas por hora: clima, tráfico, alojamiento |
+| `pucon_flow_index` | Índice final calculado (0-100) con nivel y acción recomendada |
+| `source_query_log` | Log de cada llamada a API externa |
+
+### Variables de entorno requeridas
+
+```
+# Clima (OpenWeather - free tier disponible en openweathermap.org)
+OPENWEATHER_API_KEY=...
+
+# Tráfico (Google Maps Platform - Distance Matrix API, requiere billing activado)
+GOOGLE_MAPS_API_KEY=...
+```
+
+### Variables de entorno opcionales (intervalos)
+
+```
+WEATHER_INTERVAL=3600       # cada 1 h (default)
+TRAFFIC_INTERVAL=10800      # cada 3 h (default)
+FLOW_INDEX_INTERVAL=3600    # cada 1 h (default)
+```
+
+### Lógica del índice (MVP sin alojamiento)
+
+```
+final_score = 0.60 * traffic_score + 0.40 * weather_score
+
+0-30   → bajo     → Promoción last minute, descuentos
+31-55  → medio    → Campañas normales, destacar premium
+56-75  → alto     → Subir presupuesto, urgencia
+76-100 → muy_alto → Precio completo, remarketing
+```
+
+Cuando se agregue alojamiento (etapa 2):
+```
+final_score = 0.40 * lodging_avail + 0.25 * lodging_price + 0.25 * traffic + 0.10 * weather
+```
+
+### Score de clima para HotBoat
+
+| Condición | Efecto |
+|---|---|
+| Temperatura 5-18°C | +40 |
+| Lluvia suave (0.1-5mm/h) | +20 |
+| Nubosidad ≥ 70% | +10 |
+| Viento > 30 km/h | -30 |
+| Lluvia extrema > 10mm/h | -40 |
+| Base | 50 |
+
+### Score de tráfico
+
+```
+ratio = duracion_con_trafico / duracion_normal
+score = min(100, max(0, (ratio - 1) * 100))
+# ratio 1.0 = score 0 (sin congestión)
+# ratio 1.3 = score 30
+# ratio 1.8 = score 80
+```
+
+Rutas medidas: Villarrica→Pucón, Temuco→Pucón, Aeropuerto La Araucanía→Pucón, Caburgua→Pucón.
+
+### Etapa 2: Alojamiento
+
+Ver `jobs/job_collect_lodging.py` — arquitectura lista para conectar Booking.com u otra fuente.
+
+---
+
 ## Notas
 - El job de Sheets lee por encabezados; asegúrate que tu hoja tenga columnas compatibles con el mapeo definido.
 - El job de Booknetic es un stub: agrega tu lógica de scraping/requests y mapea al esquema `booknetic_appointments`.

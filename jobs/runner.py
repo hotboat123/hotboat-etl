@@ -60,6 +60,14 @@ except Exception as e:
     print(f"[runner] Flujo Caja module not available: {e}")
 
 try:
+    from jobs.job_collect_lodging import run as run_collect_lodging
+    LODGING_ENABLED = True
+except Exception as e:
+    run_collect_lodging = None  # type: ignore[assignment]
+    LODGING_ENABLED = False
+    print(f"[runner] Lodging module not available: {e}")
+
+try:
     from jobs.job_collect_weather import run as run_collect_weather
     WEATHER_ENABLED = bool(os.getenv("OPENWEATHER_API_KEY"))
 except Exception as e:
@@ -166,6 +174,7 @@ def main() -> None:
     EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900")) # 15 min
     META_ADS_INTERVAL       = int(os.getenv("META_ADS_INTERVAL", "3600"))        # 1 h
     FLUJO_CAJA_INTERVAL     = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))      # 30 min
+    LODGING_INTERVAL        = int(os.getenv("LODGING_INTERVAL", "21600"))        # 6 h
     WEATHER_INTERVAL        = int(os.getenv("WEATHER_INTERVAL", "3600"))         # 1 h
     TRAFFIC_INTERVAL        = int(os.getenv("TRAFFIC_INTERVAL", "10800"))        # 3 h
     FLOW_INDEX_INTERVAL     = int(os.getenv("FLOW_INDEX_INTERVAL", "3600"))      # 1 h
@@ -187,6 +196,10 @@ def main() -> None:
         print(f"   - Flujo Caja: cada {FLUJO_CAJA_INTERVAL//60} minutos")
     else:
         print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID)")
+    if LODGING_ENABLED:
+        print(f"   - Alojamiento Booking: cada {LODGING_INTERVAL//3600} horas")
+    else:
+        print("   - Alojamiento Booking: DESHABILITADO")
     if WEATHER_ENABLED:
         print(f"   - Clima Pucón: cada {WEATHER_INTERVAL//60} minutos")
     else:
@@ -204,6 +217,7 @@ def main() -> None:
         "export_reservas_sheets": {"consecutive_failures": 0},
         "meta_ads_sync": {"consecutive_failures": 0},
         "flujo_caja_sync": {"consecutive_failures": 0},
+        "collect_lodging": {"consecutive_failures": 0},
         "collect_weather": {"consecutive_failures": 0},
         "collect_traffic": {"consecutive_failures": 0},
         "pucon_flow_index": {"consecutive_failures": 0},
@@ -221,6 +235,12 @@ def main() -> None:
         success = run_job_safely("flujo_caja_sync", run_flujo_caja)
         if not success:
             failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
+    if LODGING_ENABLED and run_collect_lodging is not None:
+        print("Ejecucion inicial de Alojamiento Booking...")
+        success = run_job_safely("collect_lodging", run_collect_lodging)
+        if not success:
+            failure_tracker["collect_lodging"]["consecutive_failures"] += 1
 
     if WEATHER_ENABLED and run_collect_weather is not None:
         print("Ejecucion inicial de Clima Pucón...")
@@ -244,6 +264,7 @@ def main() -> None:
     last_export_reservas_run = time.time()
     last_meta_ads_run = time.time()
     last_flujo_caja_run = time.time()
+    last_lodging_run = time.time()
     last_weather_run = time.time()
     last_traffic_run = time.time()
     last_flow_index_run = time.time()
@@ -331,6 +352,15 @@ def main() -> None:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] = 0
                 else:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
+            # Alojamiento Booking
+            if LODGING_ENABLED and run_collect_lodging is not None and current_time - last_lodging_run >= LODGING_INTERVAL:
+                success = run_job_safely("collect_lodging", run_collect_lodging)
+                last_lodging_run = current_time
+                if success:
+                    failure_tracker["collect_lodging"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["collect_lodging"]["consecutive_failures"] += 1
 
             # Clima Pucón
             if WEATHER_ENABLED and run_collect_weather is not None and current_time - last_weather_run >= WEATHER_INTERVAL:

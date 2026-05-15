@@ -1,2 +1,1 @@
-worker: python -m jobs.runner
-
+web: bash start.sh

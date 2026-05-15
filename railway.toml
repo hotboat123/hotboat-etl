@@ -2,7 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "python -m jobs.runner"
+startCommand = "bash start_all.sh"
 
 # Opcional: variables por defecto (puedes definirlas en Railway UI)
 [variables]

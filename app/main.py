@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from db.connection import get_connection
+from app.tourism_dashboard import build_html as _build_tourism_html
 
 app = FastAPI(title="HotBoat ETL Dashboard", docs_url=None, redoc_url=None)
 
@@ -111,6 +112,20 @@ def api_status():
 def api_history(job_name: str, limit: int = 20):
     rows = [_serialize(r) for r in _query_history(job_name, limit)]
     return JSONResponse({"job_name": job_name, "runs": rows})
+
+
+@app.get("/turismo", response_class=HTMLResponse)
+def turismo():
+    """Dashboard de flujo turístico Pucón — datos en tiempo real desde la DB."""
+    try:
+        with get_connection() as conn:
+            html = _build_tourism_html(conn)
+        return HTMLResponse(html)
+    except Exception as exc:
+        return HTMLResponse(
+            f"<pre style='color:red;font-family:monospace;padding:2rem'>Error cargando datos:\n{exc}</pre>",
+            status_code=500,
+        )
 
 
 @app.get("/health")

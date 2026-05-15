@@ -284,6 +284,7 @@ def ensure_schema() -> None:
     _ensure_meta_analytics_view()
     _ensure_marketing_costs_daily_view()
     _ensure_pucon_flow_schema()
+    _ensure_google_ads_schema()
 
 
 def _ensure_pucon_flow_schema() -> None:
@@ -351,6 +352,94 @@ def _ensure_pucon_flow_schema() -> None:
         """
         create index if not exists idx_source_query_log_source
             on source_query_log (source_name, requested_at desc);
+        """,
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+        conn.commit()
+
+
+def _ensure_google_ads_schema() -> None:
+    """Crea las tablas de Google Ads."""
+    statements = [
+        """
+        create table if not exists google_ads_campaigns (
+            id            text primary key,
+            customer_id   text not null,
+            name          text,
+            status        text,
+            channel_type  text,
+            budget_micros bigint,
+            raw           jsonb,
+            created_at    timestamptz not null default now(),
+            updated_at    timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_gads_campaigns_updated_at on google_ads_campaigns;
+        """,
+        """
+        create trigger trg_gads_campaigns_updated_at
+        before update on google_ads_campaigns
+        for each row execute procedure set_updated_at();
+        """,
+        """
+        create table if not exists google_ads_adgroups (
+            id           text primary key,
+            customer_id  text not null,
+            campaign_id  text,
+            name         text,
+            status       text,
+            raw          jsonb,
+            created_at   timestamptz not null default now(),
+            updated_at   timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_gads_adgroups_updated_at on google_ads_adgroups;
+        """,
+        """
+        create trigger trg_gads_adgroups_updated_at
+        before update on google_ads_adgroups
+        for each row execute procedure set_updated_at();
+        """,
+        """
+        create table if not exists google_ads_performance (
+            customer_id                    text        not null,
+            report_level                   text        not null,
+            resource_id                    text        not null,
+            date_start                     date        not null,
+            resource_name                  text,
+            campaign_id                    text,
+            adgroup_id                     text,
+            impressions                    bigint,
+            clicks                         bigint,
+            cost_micros                    bigint,
+            average_cpc_micros             bigint,
+            average_cpm_micros             bigint,
+            conversions                    numeric,
+            conversions_value              numeric,
+            all_conversions                numeric,
+            all_conversions_value          numeric,
+            view_through_conversions       bigint,
+            ctr                            numeric,
+            search_impression_share        numeric,
+            search_top_impression_share    numeric,
+            search_abs_top_impression_share numeric,
+            raw                            jsonb,
+            fetched_at                     timestamptz not null default now(),
+            primary key (customer_id, report_level, resource_id, date_start)
+        );
+        """,
+        """
+        create index if not exists idx_gads_perf_date
+            on google_ads_performance (date_start desc, report_level);
+        """,
+        """
+        create index if not exists idx_gads_perf_campaign
+            on google_ads_performance (campaign_id, date_start desc);
         """,
     ]
     with get_connection() as conn:

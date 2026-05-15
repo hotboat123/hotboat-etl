@@ -60,6 +60,16 @@ except Exception as e:
     print(f"[runner] Flujo Caja module not available: {e}")
 
 try:
+    from jobs.job_google_ads import run as run_google_ads
+    GOOGLE_ADS_ENABLED = bool(
+        os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN") and os.getenv("GOOGLE_ADS_CUSTOMER_ID")
+    )
+except Exception as e:
+    run_google_ads = None  # type: ignore[assignment]
+    GOOGLE_ADS_ENABLED = False
+    print(f"[runner] Google Ads module not available: {e}")
+
+try:
     from jobs.job_collect_lodging import run as run_collect_lodging
     LODGING_ENABLED = True
 except Exception as e:
@@ -174,6 +184,7 @@ def main() -> None:
     EXPORT_RESERVAS_INTERVAL = int(os.getenv("EXPORT_RESERVAS_INTERVAL", "900")) # 15 min
     META_ADS_INTERVAL       = int(os.getenv("META_ADS_INTERVAL", "3600"))        # 1 h
     FLUJO_CAJA_INTERVAL     = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))      # 30 min
+    GOOGLE_ADS_INTERVAL     = int(os.getenv("GOOGLE_ADS_INTERVAL", "3600"))       # 1 h
     LODGING_INTERVAL        = int(os.getenv("LODGING_INTERVAL", "21600"))        # 6 h
     WEATHER_INTERVAL        = int(os.getenv("WEATHER_INTERVAL", "3600"))         # 1 h
     TRAFFIC_INTERVAL        = int(os.getenv("TRAFFIC_INTERVAL", "10800"))        # 3 h
@@ -196,6 +207,10 @@ def main() -> None:
         print(f"   - Flujo Caja: cada {FLUJO_CAJA_INTERVAL//60} minutos")
     else:
         print("   - Flujo Caja: DESHABILITADO (falta LOOKER_SPREADSHEET_ID)")
+    if GOOGLE_ADS_ENABLED:
+        print(f"   - Google Ads: cada {GOOGLE_ADS_INTERVAL//60} minutos")
+    else:
+        print("   - Google Ads: DESHABILITADO (falta GOOGLE_ADS_DEVELOPER_TOKEN / GOOGLE_ADS_CUSTOMER_ID)")
     if LODGING_ENABLED:
         print(f"   - Alojamiento Booking: cada {LODGING_INTERVAL//3600} horas")
     else:
@@ -217,6 +232,7 @@ def main() -> None:
         "export_reservas_sheets": {"consecutive_failures": 0},
         "meta_ads_sync": {"consecutive_failures": 0},
         "flujo_caja_sync": {"consecutive_failures": 0},
+        "google_ads_sync": {"consecutive_failures": 0},
         "collect_lodging": {"consecutive_failures": 0},
         "collect_weather": {"consecutive_failures": 0},
         "collect_traffic": {"consecutive_failures": 0},
@@ -235,6 +251,12 @@ def main() -> None:
         success = run_job_safely("flujo_caja_sync", run_flujo_caja)
         if not success:
             failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
+    if GOOGLE_ADS_ENABLED and run_google_ads is not None:
+        print("Ejecucion inicial de Google Ads...")
+        success = run_job_safely("google_ads_sync", run_google_ads)
+        if not success:
+            failure_tracker["google_ads_sync"]["consecutive_failures"] += 1
 
     if LODGING_ENABLED and run_collect_lodging is not None:
         print("Ejecucion inicial de Alojamiento Booking...")
@@ -264,6 +286,7 @@ def main() -> None:
     last_export_reservas_run = time.time()
     last_meta_ads_run = time.time()
     last_flujo_caja_run = time.time()
+    last_google_ads_run = time.time()
     last_lodging_run = time.time()
     last_weather_run = time.time()
     last_traffic_run = time.time()
@@ -352,6 +375,15 @@ def main() -> None:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] = 0
                 else:
                     failure_tracker["flujo_caja_sync"]["consecutive_failures"] += 1
+
+            # Google Ads
+            if GOOGLE_ADS_ENABLED and run_google_ads is not None and current_time - last_google_ads_run >= GOOGLE_ADS_INTERVAL:
+                success = run_job_safely("google_ads_sync", run_google_ads)
+                last_google_ads_run = current_time
+                if success:
+                    failure_tracker["google_ads_sync"]["consecutive_failures"] = 0
+                else:
+                    failure_tracker["google_ads_sync"]["consecutive_failures"] += 1
 
             # Alojamiento Booking
             if LODGING_ENABLED and run_collect_lodging is not None and current_time - last_lodging_run >= LODGING_INTERVAL:

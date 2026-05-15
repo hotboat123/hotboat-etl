@@ -87,7 +87,7 @@ except Exception as e:
 
 try:
     from jobs.job_collect_traffic import run as run_collect_traffic
-    TRAFFIC_ENABLED = bool(os.getenv("TOMTOM_API_KEY"))
+    TRAFFIC_ENABLED = os.getenv("TRAFFIC_SCRAPING_ENABLED", "1") not in ("0", "false", "no")
 except Exception as e:
     run_collect_traffic = None  # type: ignore[assignment]
     TRAFFIC_ENABLED = False
@@ -220,9 +220,9 @@ def main() -> None:
     else:
         print("   - Clima Pucón: DESHABILITADO (falta OPENWEATHER_API_KEY)")
     if TRAFFIC_ENABLED:
-        print(f"   - Tráfico Pucón: cada {TRAFFIC_INTERVAL//60} minutos")
+        print(f"   - Tráfico Pucón (Google Maps scraping): cada {TRAFFIC_INTERVAL//60} minutos")
     else:
-        print("   - Tráfico Pucón: DESHABILITADO (falta TOMTOM_API_KEY)")
+        print("   - Tráfico Pucón: DESHABILITADO (TRAFFIC_SCRAPING_ENABLED=0)")
     if FLOW_INDEX_ENABLED:
         print(f"   - Flujo Turístico Index: cada {FLOW_INDEX_INTERVAL//60} minutos")
     print()

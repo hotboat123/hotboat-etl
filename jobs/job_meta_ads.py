@@ -329,7 +329,12 @@ class MetaMarketingClient:
         p["access_token"] = self.access_token
         url = f"{self.base}{path}" if path.startswith("/") else f"{self.base}/{path}"
         r = requests.get(url, params=p, timeout=120)
-        data = r.json()
+        try:
+            data = r.json()
+        except Exception:
+            raise RuntimeError(
+                f"Meta API devolvió respuesta no-JSON (status {r.status_code}): {r.text[:300]}"
+            )
         if r.status_code >= 400 or "error" in data:
             err = data.get("error", {})
             msg = err.get("message", r.text)
@@ -355,7 +360,12 @@ class MetaMarketingClient:
             if next_url:
                 time.sleep(0.35)
                 r = requests.get(next_url, timeout=120)
-                chunk = r.json()
+                try:
+                    chunk = r.json()
+                except Exception:
+                    raise RuntimeError(
+                        f"Meta API devolvió respuesta no-JSON en paginación (status {r.status_code}): {r.text[:300]}"
+                    )
                 if r.status_code >= 400 or "error" in chunk:
                     err = chunk.get("error", {})
                     raise RuntimeError(

@@ -3,9 +3,10 @@ Dashboard de estado de jobs ETL - HotBoat
 """
 from __future__ import annotations
 
-import os
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -14,7 +15,25 @@ from fastapi.staticfiles import StaticFiles
 from db.connection import get_connection
 from app.tourism_dashboard import build_html as _build_tourism_html
 
-app = FastAPI(title="HotBoat ETL Dashboard", docs_url=None, redoc_url=None)
+
+def _start_jobs_runner() -> None:
+    """Arranca jobs.runner.main() en un daemon thread."""
+    try:
+        from jobs.runner import main as runner_main
+        t = threading.Thread(target=runner_main, daemon=True, name="jobs-runner")
+        t.start()
+        print("[app] Jobs runner iniciado en background thread")
+    except Exception as exc:
+        print(f"[app] No se pudo iniciar jobs runner: {exc}")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _start_jobs_runner()
+    yield
+
+
+app = FastAPI(title="HotBoat ETL Dashboard", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

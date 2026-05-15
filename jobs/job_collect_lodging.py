@@ -161,54 +161,19 @@ def _fetch_with_requests(url: str) -> Optional[dict]:
     return None
 
 
-def _build_chrome_options():
-    from selenium.webdriver.chrome.options import Options
-    import os
-    opts = Options()
-    opts.add_argument("--headless=new")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--window-size=1920,1080")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--no-zygote")
-    opts.add_argument("--single-process")
-    opts.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    )
-    opts.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    for path in ["/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]:
-        if os.path.exists(path):
-            opts.binary_location = path
-            break
-    return opts
-
-
 def _fetch_with_selenium(url: str) -> Optional[dict]:
     try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support import expected_conditions as EC
         from selenium.webdriver.support.ui import WebDriverWait
-        from webdriver_manager.chrome import ChromeDriverManager
+        from utils.chrome import build_driver
     except ImportError:
         log.warning("[lodging] Selenium no disponible")
         return None
 
     driver = None
     try:
-        try:
-            service = Service(ChromeDriverManager().install())
-        except Exception:
-            service = Service()
-
-        driver = webdriver.Chrome(service=service, options=_build_chrome_options())
-        driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
+        driver = build_driver()
         driver.get(url)
 
         # Esperar tarjetas de propiedades o precios

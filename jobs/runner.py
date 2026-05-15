@@ -148,25 +148,9 @@ def run_job_safely(job_name: str, job_func):
         return False
 
 
-def _start_dashboard() -> None:
-    """Arranca el dashboard FastAPI en un hilo daemon."""
-    try:
-        import uvicorn
-        from app.main import app
-        port = int(os.getenv("PORT", "8080"))
-        print(f"[dashboard] Iniciando en http://0.0.0.0:{port}")
-        uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
-    except Exception as e:
-        print(f"[dashboard] No se pudo iniciar: {e}")
-
-
 def main() -> None:
     """Main loop - ejecuta jobs cada X minutos"""
     load_env()
-
-    # Iniciar dashboard en hilo de fondo
-    t = threading.Thread(target=_start_dashboard, daemon=True)
-    t.start()
 
     meta_ads_enabled = bool(
         os.getenv("META_ACCESS_TOKEN") and os.getenv("META_AD_ACCOUNT_ID")

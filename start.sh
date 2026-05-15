@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-# Ensure working dir is repo root
 cd "$(dirname "$0")"
 
-# Prefer venv python if available (Nixpacks usually creates /opt/venv)
 if [ -x "/opt/venv/bin/python" ]; then
   export PATH="/opt/venv/bin:$PATH"
 fi
 
-exec python -m jobs.runner
-
-
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --workers 1

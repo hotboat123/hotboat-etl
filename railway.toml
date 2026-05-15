@@ -2,7 +2,7 @@
 builder = "NIXPACKS"
 
 [deploy]
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1"
+startCommand = "bash start.sh"
 
 # Opcional: variables por defecto (puedes definirlas en Railway UI)
 [variables]

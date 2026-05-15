@@ -1,10 +1,28 @@
 import re
+import time
 from pathlib import Path
 
 from db.connection import get_connection
 
 
 def ensure_schema() -> None:
+    """Crea/actualiza el schema. Reintenta hasta 5 veces en errores de catálogo concurrente."""
+    for attempt in range(1, 6):
+        try:
+            _ensure_schema_once()
+            return
+        except Exception as exc:
+            msg = str(exc)
+            if "tuple concurrently updated" in msg or "deadlock detected" in msg:
+                if attempt < 5:
+                    wait = attempt * 3
+                    print(f"[migrate] Conflicto de catálogo ({exc}) — reintento {attempt}/5 en {wait}s")
+                    time.sleep(wait)
+                    continue
+            raise
+
+
+def _ensure_schema_once() -> None:
     statements = [
         # job_runs
         """

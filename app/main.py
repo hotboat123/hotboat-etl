@@ -16,15 +16,27 @@ from db.connection import get_connection
 from app.tourism_dashboard import build_html as _build_tourism_html
 
 
+def _runner_loop() -> None:
+    """Ejecuta jobs.runner.main() y lo reinicia si cae, con backoff."""
+    import time
+    from jobs.runner import main as runner_main
+    delay = 5
+    while True:
+        try:
+            print("[app] Jobs runner iniciando…")
+            runner_main()
+        except Exception as exc:
+            print(f"[app] Jobs runner terminó con error: {exc} — reiniciando en {delay}s")
+            time.sleep(delay)
+            delay = min(delay * 2, 120)
+        else:
+            # salida limpia (KeyboardInterrupt/SystemExit atrapado dentro del runner)
+            break
+
+
 def _start_jobs_runner() -> None:
-    """Arranca jobs.runner.main() en un daemon thread."""
-    try:
-        from jobs.runner import main as runner_main
-        t = threading.Thread(target=runner_main, daemon=True, name="jobs-runner")
-        t.start()
-        print("[app] Jobs runner iniciado en background thread")
-    except Exception as exc:
-        print(f"[app] No se pudo iniciar jobs runner: {exc}")
+    t = threading.Thread(target=_runner_loop, daemon=True, name="jobs-runner")
+    t.start()
 
 
 @asynccontextmanager

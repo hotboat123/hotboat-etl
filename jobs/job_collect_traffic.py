@@ -346,6 +346,12 @@ def collect_traffic_signals() -> int:
             avg_ratio, avg_score, len(ratios), len(ROUTES),
         )
 
+    if not ratios:
+        raise RuntimeError(
+            f"Google Maps scraping falló: ninguna de las {len(ROUTES)} rutas pudo extraer "
+            "tiempo de viaje. Posible bloqueo de Selenium o cambio en el HTML de Google Maps."
+        )
+
     return total_rows
 
 

@@ -4,22 +4,24 @@ from pathlib import Path
 
 from db.connection import get_connection
 
+# Advisory lock ID único para serializar migraciones entre instancias concurrentes
+_SCHEMA_LOCK_ID = 7_272_727_272
+
 
 def ensure_schema() -> None:
-    """Crea/actualiza el schema. Reintenta hasta 5 veces en errores de catálogo concurrente."""
-    for attempt in range(1, 6):
+    """
+    Crea/actualiza el schema.
+    Usa pg_advisory_lock para que solo una instancia corra DDL a la vez
+    (necesario en rolling deploys de Railway donde dos contenedores se solapan).
+    """
+    with get_connection() as lock_conn:
+        with lock_conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_LOCK_ID,))
         try:
             _ensure_schema_once()
-            return
-        except Exception as exc:
-            msg = str(exc)
-            if "tuple concurrently updated" in msg or "deadlock detected" in msg:
-                if attempt < 5:
-                    wait = attempt * 3
-                    print(f"[migrate] Conflicto de catálogo ({exc}) — reintento {attempt}/5 en {wait}s")
-                    time.sleep(wait)
-                    continue
-            raise
+        finally:
+            with lock_conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_LOCK_ID,))
 
 
 def _ensure_schema_once() -> None:

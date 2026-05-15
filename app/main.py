@@ -19,7 +19,11 @@ from app.tourism_dashboard import build_html as _build_tourism_html
 def _runner_loop() -> None:
     """Ejecuta jobs.runner.main() y lo reinicia si cae, con backoff."""
     import time
+    from db.utils import print_db_identity
     from jobs.runner import main as runner_main
+
+    print_db_identity()   # una sola vez al arrancar el proceso
+
     delay = 5
     while True:
         try:
@@ -30,7 +34,6 @@ def _runner_loop() -> None:
             time.sleep(delay)
             delay = min(delay * 2, 120)
         else:
-            # salida limpia (KeyboardInterrupt/SystemExit atrapado dentro del runner)
             break
 
 

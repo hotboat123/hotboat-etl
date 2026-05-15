@@ -177,7 +177,6 @@ def main() -> None:
     print("="*60)
     print()
 
-    print_db_identity()
     ensure_schema()
 
     SHEETS_INTERVAL         = int(os.getenv("SHEETS_INTERVAL", "600"))           # 10 min

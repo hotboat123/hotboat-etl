@@ -32,12 +32,12 @@ def build_chrome_options(headless: bool = True):
     if headless:
         opts.add_argument("--headless=new")
     opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-setuid-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--no-zygote")
-    opts.add_argument("--single-process")
     opts.add_argument("--lang=es-CL,es")
     opts.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

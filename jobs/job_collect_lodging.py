@@ -127,9 +127,11 @@ def _extract_from_html(html: str) -> dict:
     if count_el:
         m = re.search(r"([\d.]+)", count_el)
         if m:
-            parsed = int(m.group(1).replace(".", ""))
-            if parsed > 0:
-                count = parsed
+            stripped = m.group(1).replace(".", "")
+            if stripped:
+                parsed = int(stripped)
+                if parsed > 0:
+                    count = parsed
 
     return {
         "available_count": count,

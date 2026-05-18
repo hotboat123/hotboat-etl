@@ -373,6 +373,29 @@ def _ensure_pucon_flow_schema() -> None:
         create index if not exists idx_source_query_log_source
             on source_query_log (source_name, requested_at desc);
         """,
+        """
+        create table if not exists weather_forecasts (
+            id                 bigserial primary key,
+            fetched_at         timestamptz not null,
+            target_date        date        not null,
+            days_ahead         integer     not null,
+            temp_min           numeric,
+            temp_max           numeric,
+            precipitation_mm   numeric,
+            precipitation_prob numeric,
+            wind_speed_kmh     numeric,
+            weather_code       text,
+            weather_description text,
+            source             text        not null default 'openweather',
+            raw                jsonb,
+            created_at         timestamptz not null default now(),
+            unique (fetched_at, target_date)
+        );
+        """,
+        """
+        create index if not exists idx_weather_forecasts_target_date
+            on weather_forecasts (target_date desc, fetched_at desc);
+        """,
     ]
     with get_connection() as conn:
         with conn.cursor() as cur:

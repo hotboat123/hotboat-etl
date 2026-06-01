@@ -293,6 +293,23 @@ def _ensure_schema_once() -> None:
         before update on flujo_caja
         for each row execute procedure set_updated_at();
         """,
+        # flujo_caja_actual: mismas filas que flujo_caja pero con columnas explícitas
+        """
+        create table if not exists flujo_caja_actual (
+            id            text primary key,
+            fila          integer not null,
+            synced_at     timestamptz not null default now(),
+            fecha         text,
+            descripci_n   text,
+            cargos        text,
+            abonos        text,
+            saldo         text,
+            categor_a_1   text,
+            categor_a_2   text,
+            observaciones text,
+            origen        text
+        );
+        """,
     ]
 
     with get_connection() as conn:

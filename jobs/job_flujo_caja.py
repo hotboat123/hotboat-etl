@@ -20,6 +20,20 @@ from db.connection import get_connection
 
 SHEET_NAME_DEFAULT = "consolidad flujo caja"
 
+ACTUAL_COLUMNS = ["fecha", "descripci_n", "cargos", "abonos", "saldo",
+                  "categor_a_1", "categor_a_2", "observaciones", "origen"]
+
+
+def _normalize_col(header: str) -> str:
+    """Convierte un encabezado del sheet al nombre de columna SQL (ej: 'Categoría 1' → 'categor_a_1')."""
+    chars = []
+    for ch in header.lower():
+        if ch.isascii() and ch.isalnum():
+            chars.append(ch)
+        else:
+            chars.append("_")
+    return "".join(chars).strip("_")
+
 
 def _get_gspread_client():
     import gspread
@@ -98,9 +112,20 @@ def run() -> int:
 
     print(f"[flujo_caja] {len(rows_to_insert)} filas a sincronizar")
 
+    # Pre-calcular columnas normalizadas para flujo_caja_actual
+    actual_rows = []
+    for r in rows_to_insert:
+        col_map = {_normalize_col(k): v for k, v in r["raw"].items()}
+        actual_rows.append({
+            "id": r["id"],
+            "fila": r["fila"],
+            **{col: col_map.get(col) or None for col in ACTUAL_COLUMNS},
+        })
+
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("TRUNCATE TABLE flujo_caja RESTART IDENTITY")
+            cur.execute("TRUNCATE TABLE flujo_caja_actual RESTART IDENTITY")
             if rows_to_insert:
                 cur.executemany(
                     """
@@ -115,6 +140,30 @@ def run() -> int:
                         {**r, "raw": json.dumps(r["raw"], ensure_ascii=False)}
                         for r in rows_to_insert
                     ],
+                )
+                cur.executemany(
+                    """
+                    INSERT INTO flujo_caja_actual
+                        (id, fila, fecha, descripci_n, cargos, abonos, saldo,
+                         categor_a_1, categor_a_2, observaciones, origen)
+                    VALUES
+                        (%(id)s, %(fila)s, %(fecha)s, %(descripci_n)s, %(cargos)s,
+                         %(abonos)s, %(saldo)s, %(categor_a_1)s, %(categor_a_2)s,
+                         %(observaciones)s, %(origen)s)
+                    ON CONFLICT (id) DO UPDATE
+                        SET fila          = EXCLUDED.fila,
+                            fecha         = EXCLUDED.fecha,
+                            descripci_n   = EXCLUDED.descripci_n,
+                            cargos        = EXCLUDED.cargos,
+                            abonos        = EXCLUDED.abonos,
+                            saldo         = EXCLUDED.saldo,
+                            categor_a_1   = EXCLUDED.categor_a_1,
+                            categor_a_2   = EXCLUDED.categor_a_2,
+                            observaciones = EXCLUDED.observaciones,
+                            origen        = EXCLUDED.origen,
+                            synced_at     = now()
+                    """,
+                    actual_rows,
                 )
         conn.commit()
 

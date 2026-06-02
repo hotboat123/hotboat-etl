@@ -293,22 +293,36 @@ def _ensure_schema_once() -> None:
         before update on flujo_caja
         for each row execute procedure set_updated_at();
         """,
-        # flujo_caja_actual: mismas filas que flujo_caja pero con columnas explícitas
+        # flujo_caja_actual: mismas filas que flujo_caja pero con columnas tipadas
         """
         create table if not exists flujo_caja_actual (
             id            text primary key,
             fila          integer not null,
             synced_at     timestamptz not null default now(),
-            fecha         text,
+            fecha         date,
             descripci_n   text,
-            cargos        text,
-            abonos        text,
-            saldo         text,
+            cargos        numeric,
+            abonos        numeric,
+            saldo         numeric,
             categor_a_1   text,
             categor_a_2   text,
             observaciones text,
             origen        text
         );
+        """,
+        # Migrar columnas si ya existían como text (deploy anterior)
+        """
+        DO $$
+        BEGIN
+            IF (SELECT data_type FROM information_schema.columns
+                WHERE table_name = 'flujo_caja_actual' AND column_name = 'fecha') = 'text' THEN
+                ALTER TABLE flujo_caja_actual
+                    ALTER COLUMN fecha  TYPE date    USING NULLIF(trim(fecha), '')::date,
+                    ALTER COLUMN cargos TYPE numeric USING NULLIF(replace(replace(trim(cargos), '.', ''), ',', '.'), '')::numeric,
+                    ALTER COLUMN abonos TYPE numeric USING NULLIF(replace(replace(trim(abonos), '.', ''), ',', '.'), '')::numeric,
+                    ALTER COLUMN saldo  TYPE numeric USING NULLIF(replace(replace(trim(saldo),  '.', ''), ',', '.'), '')::numeric;
+            END IF;
+        END $$;
         """,
     ]
 

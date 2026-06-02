@@ -14,6 +14,8 @@ import base64
 import hashlib
 import json
 import os
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional
 
 from db.connection import get_connection
@@ -33,6 +35,40 @@ def _normalize_col(header: str) -> str:
         else:
             chars.append("_")
     return "".join(chars).strip("_")
+
+
+def _parse_date(value: Any) -> Optional[object]:
+    """Parsea fecha desde texto (dd/mm/yyyy, dd-mm-yyyy, yyyy-mm-dd). Retorna datetime.date o None."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_numeric(value: Any) -> Optional[Decimal]:
+    """Parsea número con formato chileno (1.234,56 → 1234.56). Retorna Decimal o None."""
+    if not value:
+        return None
+    text = str(value).strip().replace("$", "").replace("\xa0", "").replace(" ", "")
+    if not text or text in ("-", "–", "—"):
+        return None
+    # Si tiene coma: formato chileno (punto=miles, coma=decimal)
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif text.count(".") > 1:
+        # Múltiples puntos = separador de miles sin decimales
+        text = text.replace(".", "")
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
 
 
 def _get_gspread_client():
@@ -112,14 +148,22 @@ def run() -> int:
 
     print(f"[flujo_caja] {len(rows_to_insert)} filas a sincronizar")
 
-    # Pre-calcular columnas normalizadas para flujo_caja_actual
+    # Pre-calcular columnas tipadas para flujo_caja_actual
     actual_rows = []
     for r in rows_to_insert:
         col_map = {_normalize_col(k): v for k, v in r["raw"].items()}
         actual_rows.append({
-            "id": r["id"],
-            "fila": r["fila"],
-            **{col: col_map.get(col) or None for col in ACTUAL_COLUMNS},
+            "id":            r["id"],
+            "fila":          r["fila"],
+            "fecha":         _parse_date(col_map.get("fecha")),
+            "descripci_n":   col_map.get("descripci_n") or None,
+            "cargos":        _parse_numeric(col_map.get("cargos")),
+            "abonos":        _parse_numeric(col_map.get("abonos")),
+            "saldo":         _parse_numeric(col_map.get("saldo")),
+            "categor_a_1":   col_map.get("categor_a_1") or None,
+            "categor_a_2":   col_map.get("categor_a_2") or None,
+            "observaciones": col_map.get("observaciones") or None,
+            "origen":        col_map.get("origen") or None,
         })
 
     with get_connection() as conn:

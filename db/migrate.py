@@ -317,10 +317,14 @@ def _ensure_schema_once() -> None:
             IF (SELECT data_type FROM information_schema.columns
                 WHERE table_name = 'flujo_caja_actual' AND column_name = 'fecha') = 'text' THEN
                 ALTER TABLE flujo_caja_actual
-                    ALTER COLUMN fecha  TYPE date    USING NULLIF(trim(fecha), '')::date,
-                    ALTER COLUMN cargos TYPE numeric USING NULLIF(replace(replace(trim(cargos), '.', ''), ',', '.'), '')::numeric,
-                    ALTER COLUMN abonos TYPE numeric USING NULLIF(replace(replace(trim(abonos), '.', ''), ',', '.'), '')::numeric,
-                    ALTER COLUMN saldo  TYPE numeric USING NULLIF(replace(replace(trim(saldo),  '.', ''), ',', '.'), '')::numeric;
+                    ALTER COLUMN fecha  TYPE date
+                        USING NULLIF(trim(fecha), '')::date,
+                    ALTER COLUMN cargos TYPE numeric
+                        USING NULLIF(replace(replace(trim(replace(cargos, '$', '')), ',', ''), '.', ''), '')::numeric,
+                    ALTER COLUMN abonos TYPE numeric
+                        USING NULLIF(replace(replace(trim(replace(abonos, '$', '')), ',', ''), '.', ''), '')::numeric,
+                    ALTER COLUMN saldo  TYPE numeric
+                        USING NULLIF(replace(replace(trim(replace(saldo,  '$', '')), ',', ''), '.', ''), '')::numeric;
             END IF;
         END $$;
         """,

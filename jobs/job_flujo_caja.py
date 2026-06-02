@@ -53,17 +53,25 @@ def _parse_date(value: Any) -> Optional[object]:
 
 
 def _parse_numeric(value: Any) -> Optional[Decimal]:
-    """Parsea número con formato chileno (1.234,56 → 1234.56). Retorna Decimal o None."""
+    """Parsea número desde texto con formato CLP ($25,510 → 25510). Retorna Decimal o None."""
     if not value:
         return None
     text = str(value).strip().replace("$", "").replace("\xa0", "").replace(" ", "")
     if not text or text in ("-", "–", "—"):
         return None
-    # Si tiene coma: formato chileno (punto=miles, coma=decimal)
-    if "," in text:
-        text = text.replace(".", "").replace(",", ".")
+    if "," in text and "." not in text:
+        # Coma como separador de miles: $25,510 → 25510
+        text = text.replace(",", "")
+    elif "," in text and "." in text:
+        # Determinar cuál es decimal por posición (el último separador es el decimal)
+        if text.rfind(",") > text.rfind("."):
+            # Formato chileno: 1.234,56 → 1234.56
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            # Formato anglosajón: 1,234.56 → 1234.56
+            text = text.replace(",", "")
     elif text.count(".") > 1:
-        # Múltiples puntos = separador de miles sin decimales
+        # Múltiples puntos = miles sin decimal: 1.234.567 → 1234567
         text = text.replace(".", "")
     try:
         return Decimal(text)

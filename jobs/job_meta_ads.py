@@ -454,6 +454,63 @@ def _row_insight(
     }
 
 
+def _sync_custom_conversions(
+    client: "MetaMarketingClient", account_id: str, acct_path: str
+) -> None:
+    print("[meta_ads] Fetching custom conversions...")
+    try:
+        raw = client.paged(
+            f"{acct_path}/customconversions",
+            {"fields": "id,name,custom_event_type"},
+        )
+    except Exception as exc:
+        print(f"[meta_ads] custom conversions: error ({exc}) — omitiendo")
+        return
+    rows = []
+    for o in raw:
+        if not o.get("id"):
+            continue
+        rows.append({
+            "id": str(o["id"]),
+            "ad_account_id": account_id,
+            "name": o.get("name"),
+            "action_type": f"offsite_conversion.custom.{o['id']}",
+            "event_type": o.get("custom_event_type"),
+            "raw": o,
+        })
+    if rows:
+        upsert_many(
+            "meta_custom_conversions",
+            rows,
+            conflict_columns=["id"],
+            update_columns=["ad_account_id", "name", "action_type", "event_type", "raw"],
+        )
+    print(f"[meta_ads] Custom conversions sincronizadas: {len(rows)}")
+
+
+def _backfill_custom_conv_columns() -> None:
+    """Extrae valores de conversiones personalizadas desde el JSONB actions."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE meta_ads_insights i
+                SET reserva_app_nueva = (
+                    SELECT COALESCE(SUM((elem->>'value')::numeric), 0)
+                    FROM jsonb_array_elements(i.actions) elem
+                    WHERE elem->>'action_type' = (
+                        SELECT action_type
+                        FROM meta_custom_conversions
+                        WHERE name ILIKE '%reserva app nueva%'
+                        LIMIT 1
+                    )
+                )
+                WHERE i.actions IS NOT NULL
+            """)
+            n = cur.rowcount if cur.rowcount >= 0 else 0
+        conn.commit()
+    print(f"[meta_ads] Backfill reserva_app_nueva: {n} filas actualizadas")
+
+
 def run() -> int:
     token = _normalize_access_token(_env("META_ACCESS_TOKEN"))
     raw_acct = _env("META_AD_ACCOUNT_ID")
@@ -693,6 +750,8 @@ def run() -> int:
         ],
     )
 
+    _sync_custom_conversions(client, account_id, acct_path)
+    _backfill_custom_conv_columns()
     _sync_marketing_costs_from_meta()
 
     total = len(camp_rows) + len(adset_rows) + len(ad_rows) + len(insight_rows)

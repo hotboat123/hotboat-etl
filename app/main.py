@@ -192,7 +192,7 @@ def turismo_debug():
 @app.get("/api/debug/gastos-schema")
 def gastos_schema():
     """Devuelve columnas y categorías existentes de la tabla gastos."""
-    result: dict = {"columns": [], "categorias": [], "error": None}
+    result: dict = {"columns": [], "categoria_tables": [], "categorias": [], "error": None}
     try:
         with get_connection() as conn:
             with conn.cursor() as cur:
@@ -203,17 +203,21 @@ def gastos_schema():
                     ORDER BY ordinal_position
                 """)
                 result["columns"] = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
+                # Buscar tablas de categorías
                 cur.execute("""
-                    SELECT DISTINCT categoria_1, categoria_2, COUNT(*) as n
-                    FROM gastos
-                    WHERE categoria_1 IS NOT NULL
-                    GROUP BY categoria_1, categoria_2
-                    ORDER BY categoria_1, categoria_2
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                    AND table_name ILIKE '%categor%'
+                    ORDER BY table_name
                 """)
-                result["categorias"] = [
-                    {"categoria_1": r[0], "categoria_2": r[1], "count": r[2]}
-                    for r in cur.fetchall()
-                ]
+                cat_tables = [r[0] for r in cur.fetchall()]
+                result["categoria_tables"] = cat_tables
+                # Leer contenido de cada tabla de categorías
+                for tbl in cat_tables:
+                    cur.execute(f"SELECT * FROM {tbl} ORDER BY id LIMIT 100")
+                    cols = [d[0] for d in cur.description]
+                    rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+                    result["categorias"].append({"table": tbl, "rows": rows})
     except Exception as exc:
         result["error"] = str(exc)
     return JSONResponse(result)

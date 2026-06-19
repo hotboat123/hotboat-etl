@@ -189,6 +189,36 @@ def turismo_debug():
     return JSONResponse(result)
 
 
+@app.get("/api/debug/gastos-schema")
+def gastos_schema():
+    """Devuelve columnas y categorías existentes de la tabla gastos."""
+    result: dict = {"columns": [], "categorias": [], "error": None}
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_name = 'gastos'
+                    ORDER BY ordinal_position
+                """)
+                result["columns"] = [{"name": r[0], "type": r[1]} for r in cur.fetchall()]
+                cur.execute("""
+                    SELECT DISTINCT categoria_1, categoria_2, COUNT(*) as n
+                    FROM gastos
+                    WHERE categoria_1 IS NOT NULL
+                    GROUP BY categoria_1, categoria_2
+                    ORDER BY categoria_1, categoria_2
+                """)
+                result["categorias"] = [
+                    {"categoria_1": r[0], "categoria_2": r[1], "count": r[2]}
+                    for r in cur.fetchall()
+                ]
+    except Exception as exc:
+        result["error"] = str(exc)
+    return JSONResponse(result)
+
+
 @app.api_route("/api/scan-receipt", methods=["GET", "POST"])
 def scan_receipt():
     """Escanea la boleta más reciente de WhatsApp y registra el gasto."""

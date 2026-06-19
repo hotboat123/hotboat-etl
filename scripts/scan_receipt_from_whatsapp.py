@@ -28,7 +28,7 @@ except ImportError:
 PHONE_NUMBER   = "56977577307"
 WHATSAPP_BASE  = "https://hotboat-whatsapp-staging-tom.up.railway.app"
 GASTOS_URL     = f"{WHATSAPP_BASE}/api/admin/gastos"
-GEMINI_MODEL   = "gemini-2.0-flash-lite"
+GEMINI_MODEL   = "gemini-3.1-flash-lite"
 GEMINI_URL     = (
     f"https://generativelanguage.googleapis.com/v1beta/models"
     f"/{GEMINI_MODEL}:generateContent"

@@ -189,7 +189,7 @@ def turismo_debug():
     return JSONResponse(result)
 
 
-@app.post("/api/scan-receipt")
+@app.api_route("/api/scan-receipt", methods=["GET", "POST"])
 def scan_receipt():
     """Escanea la boleta más reciente de WhatsApp y registra el gasto."""
     import base64

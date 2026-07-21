@@ -1,6 +1,5 @@
 import datetime as dt
-import traceback
-from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from psycopg import sql
 from psycopg.types.json import Json
@@ -151,64 +150,6 @@ def upsert_many(
         execute_batch(rows_list[i : i + batch_size])
 
     return len(rows_list)
-
-
-# Job meta logging
-def record_job_start(job_name: str) -> int:
-    started_at = now_utc()
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO job_runs (job_name, status, started_at)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                (job_name, "running", started_at),
-            )
-            job_run_id = cur.fetchone()[0]
-        conn.commit()
-    return job_run_id
-
-
-def record_job_end(job_run_id: int, row_count: int) -> None:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE job_runs
-                SET status = %s, finished_at = %s, row_count = %s
-                WHERE id = %s
-                """,
-                ("success", now_utc(), row_count, job_run_id),
-            )
-        conn.commit()
-
-
-def record_job_error(job_run_id: int, err: BaseException) -> None:
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE job_runs
-                SET status = %s, finished_at = %s, error = %s
-                WHERE id = %s
-                """,
-                ("error", now_utc(), f"{type(err).__name__}: {err}\n{traceback.format_exc()}", job_run_id),
-            )
-        conn.commit()
-
-
-def run_with_job_meta(job_name: str, fn: Callable[[], int]) -> None:
-    job_run_id = record_job_start(job_name)
-    try:
-        row_count = int(fn() or 0)
-        record_job_end(job_run_id, row_count)
-        print(f"[job {job_name}] success rows={row_count}")
-    except BaseException as e:  # noqa: BLE001
-        record_job_error(job_run_id, e)
-        print(f"[job {job_name}] error: {e}")
-        raise
 
 
 def print_db_identity() -> None:

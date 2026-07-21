@@ -7,6 +7,9 @@ import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+from db.connection import get_connection
 
 
 def _runner_loop() -> None:

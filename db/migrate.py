@@ -130,6 +130,32 @@ def _ensure_schema_once() -> None:
         create index if not exists idx_meta_ads_insights_date
         on meta_ads_insights (date_start desc);
         """,
+        # columna para conversión personalizada "reserva app nueva"
+        """
+        alter table if exists meta_ads_insights
+        add column if not exists reserva_app_nueva numeric;
+        """,
+        # meta_custom_conversions: catálogo de conversiones personalizadas de la cuenta
+        """
+        create table if not exists meta_custom_conversions (
+            id            text primary key,
+            ad_account_id text not null,
+            name          text,
+            action_type   text,
+            event_type    text,
+            raw           jsonb,
+            created_at    timestamptz not null default now(),
+            updated_at    timestamptz not null default now()
+        );
+        """,
+        """
+        drop trigger if exists trg_meta_custom_conv_updated_at on meta_custom_conversions;
+        """,
+        """
+        create trigger trg_meta_custom_conv_updated_at
+        before update on meta_custom_conversions
+        for each row execute procedure set_updated_at();
+        """,
         # flujo_caja (importado desde Google Sheets "Looker HotBoat")
         """
         create table if not exists flujo_caja (

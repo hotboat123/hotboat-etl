@@ -9,7 +9,24 @@ import sys
 import time
 import base64
 import io
+import logging
 import datetime as dt
+
+# stdout/stderr en Docker/Railway quedan con buffer completo (no de linea), asi que
+# los print() pueden tardar minutos en aparecer en los logs. Forzamos line-buffering.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+# Sin esto, cualquier logging.getLogger(__name__).info(...) (ej. job_google_ads)
+# no imprime nada: no hay handler configurado en el logger root.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+)
 
 # Agregar la raíz del proyecto al path para que funcione desde cualquier directorio
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -80,9 +97,12 @@ def run_job_safely(job_name: str, job_func) -> bool:
         print(f"Hora: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"{'='*60}\n")
 
-        job_func()
+        result = job_func()
 
-        print(f"\n[OK] Job '{job_name}' completado exitosamente\n")
+        if isinstance(result, int):
+            print(f"\n[OK] Job '{job_name}' completado — {result} filas procesadas\n")
+        else:
+            print(f"\n[OK] Job '{job_name}' completado exitosamente\n")
         return True
     except Exception as e:
         print(f"\n[ERROR] Job '{job_name}': {e}\n")

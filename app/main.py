@@ -3,8 +3,25 @@ HotBoat ETL - proceso worker (jobs en background) + health check para Railway.
 """
 from __future__ import annotations
 
+import sys
+import logging
 import threading
 from contextlib import asynccontextmanager
+
+# stdout en Docker/Railway queda con buffer completo (no de linea): los print()
+# de los jobs pueden tardar en aparecer en los logs. Forzamos line-buffering
+# lo antes posible en el proceso, antes de arrancar el hilo del runner.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+)
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse

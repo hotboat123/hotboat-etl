@@ -44,56 +44,23 @@ SELECT
   i.reach AS "Alcance",
   i.impressions AS "Impresiones",
   i.frequency AS "Frecuencia",
-  meta_fn_action_types_sum(
-    i.actions,
-    ARRAY[
-      'purchase',
-      'omni_purchase',
-      'offsite_conversion.fb_pixel_purchase',
-      'onsite_conversion.purchase'
-    ]
-  ) AS "Compras",
+  -- "Compras" = reserva_app_3 (conversión personalizada real de HotBoat —
+  -- ver meta_ads_insights.reserva_app_3, extraída por nombre exacto en
+  -- job_meta_ads.py::_backfill_custom_conv_columns, más robusta que repetir
+  -- el id numérico de Meta acá). Antes usaba los action_types genéricos de
+  -- Meta Pixel (purchase/omni_purchase/...) que nunca se disparan para
+  -- HotBoat (no es una tienda online con checkout de Meta Pixel) y siempre
+  -- daban 0 — cambiado 2026-08-12 a pedido del dueño. Se mantiene el
+  -- nombre de columna "Compras" (no "Compra") a propósito: hotboat-automations/
+  -- scripts/analyze_meta_ads_performance.py hace SUM("Compras") y se
+  -- rompería con un rename.
+  i.reserva_app_3 AS "Compras",
   COALESCE(i.raw->>'account_currency', 'CLP') AS "Divisa",
   i.spend AS "Importe gastado (CLP)",
   meta_fn_action_type_sum(i.actions, 'link_click') AS "Clics en el enlace",
   i.ctr AS "CTR (todos)",
   i.cpc AS "CPC (todos)",
   i.cpm AS "CPM (costo por mil impresiones)",
-  meta_fn_action_types_sum(
-    i.actions,
-    ARRAY[
-      'add_to_cart',
-      'offsite_conversion.fb_pixel_add_to_cart',
-      'omni_add_to_cart',
-      'onsite_web_add_to_cart',
-      'onsite_web_app_add_to_cart'
-    ]
-  ) AS "Artículos agregados al carrito",
-  CASE
-    WHEN meta_fn_action_types_sum(
-      i.actions,
-      ARRAY[
-        'add_to_cart',
-        'offsite_conversion.fb_pixel_add_to_cart',
-        'omni_add_to_cart',
-        'onsite_web_add_to_cart',
-        'onsite_web_app_add_to_cart'
-      ]
-    ) > 0
-    THEN i.spend / NULLIF(
-      meta_fn_action_types_sum(
-        i.actions,
-        ARRAY[
-          'add_to_cart',
-          'offsite_conversion.fb_pixel_add_to_cart',
-          'omni_add_to_cart',
-          'onsite_web_add_to_cart',
-          'onsite_web_app_add_to_cart'
-        ]
-      ),
-      0
-    )
-  END AS "Costo por artículo agregado al carrito",
   COALESCE(
     meta_fn_action_type_sum(i.actions, 'video_view'),
     meta_fn_action_array_sum(i.raw->'video_thruplay_watched_actions')
@@ -104,17 +71,8 @@ SELECT
   meta_fn_action_array_sum(i.raw->'video_p95_watched_actions') AS "Reproducciones de video hasta el 95%",
   meta_fn_action_array_sum(i.raw->'video_p100_watched_actions') AS "Reproducciones de video hasta el 100%",
   CASE
-    WHEN meta_fn_action_types_sum(
-      i.actions,
-      ARRAY['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_conversion.purchase']
-    ) > 0
-    THEN i.spend / NULLIF(
-      meta_fn_action_types_sum(
-        i.actions,
-        ARRAY['purchase', 'omni_purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_conversion.purchase']
-      ),
-      0
-    )
+    WHEN i.reserva_app_3 > 0
+    THEN i.spend / NULLIF(i.reserva_app_3, 0)
   END AS "Costo por compra",
   i.date_start AS "Inicio del informe",
   i.date_stop AS "Fin del informe",
@@ -131,34 +89,8 @@ SELECT
   END AS "Costo por conversión personalizada 1755907938288280",
   meta_fn_action_types_sum(
     i.actions,
-    ARRAY['add_payment_info', 'offsite_conversion.fb_pixel_add_payment_info']
-  ) AS "Hizo el pago",
-  CASE
-    WHEN meta_fn_action_types_sum(
-      i.actions,
-      ARRAY['add_payment_info', 'offsite_conversion.fb_pixel_add_payment_info']
-    ) > 0
-    THEN i.spend / NULLIF(
-      meta_fn_action_types_sum(
-        i.actions,
-        ARRAY['add_payment_info', 'offsite_conversion.fb_pixel_add_payment_info']
-      ),
-      0
-    )
-  END AS "Costo por Hizo el pago",
-  meta_fn_action_types_sum(
-    i.actions,
     ARRAY['page_engagement', 'post_engagement', 'post_reaction']
   ) AS "Interacción con la página",
-  meta_fn_action_types_sum(
-    i.actions,
-    ARRAY[
-      'initiate_checkout',
-      'offsite_conversion.fb_pixel_initiate_checkout',
-      'omni_initiated_checkout',
-      'onsite_web_initiate_checkout'
-    ]
-  ) AS "Intento pagar",
   meta_fn_action_types_sum(
     i.actions,
     ARRAY[

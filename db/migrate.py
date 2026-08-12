@@ -135,6 +135,13 @@ def _ensure_schema_once() -> None:
         alter table if exists meta_ads_insights
         add column if not exists reserva_app_nueva numeric;
         """,
+        # columna para conversión personalizada "reserva app 3" — la conversión
+        # nueva creada en Meta 2026-08 que reemplaza/complementa a "reserva app
+        # nueva". Ver _CUSTOM_CONVERSION_COLUMNS en jobs/job_meta_ads.py.
+        """
+        alter table if exists meta_ads_insights
+        add column if not exists reserva_app_3 numeric;
+        """,
         # meta_custom_conversions: catálogo de conversiones personalizadas de la cuenta
         """
         create table if not exists meta_custom_conversions (

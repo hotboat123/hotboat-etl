@@ -488,27 +488,56 @@ def _sync_custom_conversions(
     print(f"[meta_ads] Custom conversions sincronizadas: {len(rows)}")
 
 
+# Conversiones personalizadas de Meta con su propia columna dedicada en
+# meta_ads_insights (además de vivir, ya sin desglosar, dentro del JSONB
+# crudo `actions` de cada fila) — para que tengan su propio nombre de
+# columna fácil de consultar en vez de tener que buscar el action_type
+# largo (offsite_conversion.custom.<id>) dentro del JSONB cada vez.
+# Agregar una nueva conversión = agregar su columna en db/migrate.py +
+# una entrada acá con el NOMBRE EXACTO tal cual aparece en Meta Ads
+# Manager (el id numérico de Meta cambia si se recrea la conversión, el
+# nombre es lo estable).
+#
+# Nombre EXACTO (match por LOWER(name) = LOWER(...), no ILIKE '%...%')
+# — un patrón con wildcards como '%reserva app nueva%' también matchea
+# "reserva app nueva 2", una conversión DISTINTA con el mismo prefijo, y
+# sin ORDER BY el LIMIT 1 puede quedarse con cualquiera de las dos de
+# forma no determinística. Encontrado 2026-08-12 corriendo esto en vivo:
+# terminó backfillenado reserva_app_nueva con los valores de "reserva app
+# nueva 2" (que no tiene datos), dejando la columna en 0 en vez de los
+# valores reales.
+_CUSTOM_CONVERSION_COLUMNS = {
+    "reserva_app_nueva": "Reserva app nueva",
+    "reserva_app_3": "Reserva app 3",
+}
+
+
 def _backfill_custom_conv_columns() -> None:
-    """Extrae valores de conversiones personalizadas desde el JSONB actions."""
+    """Extrae valores de conversiones personalizadas desde el JSONB actions
+    hacia sus columnas dedicadas — ver _CUSTOM_CONVERSION_COLUMNS."""
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE meta_ads_insights i
-                SET reserva_app_nueva = (
-                    SELECT COALESCE(SUM((elem->>'value')::numeric), 0)
-                    FROM jsonb_array_elements(i.actions) elem
-                    WHERE elem->>'action_type' = (
-                        SELECT action_type
-                        FROM meta_custom_conversions
-                        WHERE name ILIKE '%reserva app nueva%'
-                        LIMIT 1
+            for column, exact_name in _CUSTOM_CONVERSION_COLUMNS.items():
+                cur.execute(
+                    f"""
+                    UPDATE meta_ads_insights i
+                    SET {column} = (
+                        SELECT COALESCE(SUM((elem->>'value')::numeric), 0)
+                        FROM jsonb_array_elements(i.actions) elem
+                        WHERE elem->>'action_type' = (
+                            SELECT action_type
+                            FROM meta_custom_conversions
+                            WHERE LOWER(name) = LOWER(%s)
+                            LIMIT 1
+                        )
                     )
+                    WHERE i.actions IS NOT NULL
+                    """,
+                    (exact_name,),
                 )
-                WHERE i.actions IS NOT NULL
-            """)
-            n = cur.rowcount if cur.rowcount >= 0 else 0
+                n = cur.rowcount if cur.rowcount >= 0 else 0
+                print(f"[meta_ads] Backfill {column}: {n} filas actualizadas")
         conn.commit()
-    print(f"[meta_ads] Backfill reserva_app_nueva: {n} filas actualizadas")
 
 
 def run() -> int:

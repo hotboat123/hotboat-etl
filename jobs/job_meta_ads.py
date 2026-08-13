@@ -17,6 +17,9 @@ Optional:
   META_INSIGHTS_MAX_CHUNKS  Default 36. Con maximum/data_maximum, máximo de ventanas hacia atrás (~3 años si chunk=31).
   META_INSIGHTS_PAGE_LIMIT  Default 25. Límite por página en /insights (más bajo = menos carga por respuesta).
   META_SYNC_MARKETING_COSTS_TABLE  Default 1: tras insights, rellena tabla marketing_costs desde meta_ads_insights. 0 para desactivar.
+  META_INSIGHTS_SYNC_REGION  Default 1: además de los insights normales, pide una 2ª pasada con
+    breakdowns=region y la guarda en meta_ads_insights_region (una fila por anuncio x día x región,
+    ver vista v_meta_ads_by_region). Duplica las llamadas a /insights; 0 para desactivar.
 """
 from __future__ import annotations
 
@@ -418,7 +421,7 @@ def _row_ad(account_id: str, o: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _row_insight(
-    account_id: str, o: Dict[str, Any], level: str
+    account_id: str, o: Dict[str, Any], level: str, *, with_region: bool = False
 ) -> Optional[Dict[str, Any]]:
     date_start = _parse_date(o.get("date_start"))
     if date_start is None:
@@ -431,7 +434,7 @@ def _row_insight(
         key = o.get("campaign_id")
     if not key:
         return None
-    return {
+    row = {
         "ad_id": str(key),
         "date_start": date_start,
         "date_stop": _parse_date(o.get("date_stop")),
@@ -452,6 +455,12 @@ def _row_insight(
         "raw": o,
         "fetched_at": now_utc(),
     }
+    if with_region:
+        # meta_ads_insights_region.region es parte de la llave primaria (no
+        # puede ser NULL) — cuando Meta no logra atribuir región a una
+        # porción del tráfico devuelve region="" en esa fila.
+        row["region"] = (o.get("region") or "").strip() or "Desconocida"
+    return row
 
 
 def _sync_custom_conversions(
@@ -741,7 +750,14 @@ def run() -> int:
                 (f"date_preset {date_preset}", {**base_insight, "date_preset": date_preset})
             )
 
+    sync_region = (_env("META_INSIGHTS_SYNC_REGION", "1") or "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
     insight_rows: List[Dict[str, Any]] = []
+    insight_region_rows: List[Dict[str, Any]] = []
     for idx, (label, insight_params) in enumerate(insight_fetch_plans):
         if idx > 0:
             time.sleep(0.4)
@@ -753,6 +769,22 @@ def run() -> int:
             row = _row_insight(account_id, x, level)
             if row:
                 insight_rows.append(row)
+
+        if sync_region:
+            # Segunda pasada con breakdowns=region — no se puede mezclar con
+            # la de arriba en una sola petición porque cambia la forma de
+            # cada fila (una por anuncio × día × región en vez de una por
+            # anuncio × día), y meta_ads_insights depende de esa unicidad.
+            time.sleep(0.4)
+            print(f"[meta_ads] Fetching insights BY REGION level={level} ({label})...")
+            region_params = {**insight_params, "breakdowns": "region"}
+            raw_region = client.paged(
+                f"{acct_path}/insights", region_params, page_limit=insights_page_limit
+            )
+            for x in raw_region:
+                row = _row_insight(account_id, x, level, with_region=True)
+                if row:
+                    insight_region_rows.append(row)
 
     upsert_many(
         "meta_ads_insights",
@@ -779,14 +811,40 @@ def run() -> int:
         ],
     )
 
+    if insight_region_rows:
+        upsert_many(
+            "meta_ads_insights_region",
+            insight_region_rows,
+            conflict_columns=["ad_id", "date_start", "region"],
+            update_columns=[
+                "date_stop",
+                "ad_account_id",
+                "campaign_id",
+                "adset_id",
+                "impressions",
+                "clicks",
+                "reach",
+                "spend",
+                "frequency",
+                "cpm",
+                "cpc",
+                "ctr",
+                "cpp",
+                "actions",
+                "cost_per_action_type",
+                "raw",
+                "fetched_at",
+            ],
+        )
+
     _sync_custom_conversions(client, account_id, acct_path)
     _backfill_custom_conv_columns()
     _sync_marketing_costs_from_meta()
 
-    total = len(camp_rows) + len(adset_rows) + len(ad_rows) + len(insight_rows)
+    total = len(camp_rows) + len(adset_rows) + len(ad_rows) + len(insight_rows) + len(insight_region_rows)
     print(
         f"[meta_ads] Upserted campaigns={len(camp_rows)} adsets={len(adset_rows)} "
-        f"ads={len(ad_rows)} insights={len(insight_rows)}"
+        f"ads={len(ad_rows)} insights={len(insight_rows)} insights_region={len(insight_region_rows)}"
     )
     return total
 

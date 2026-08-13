@@ -186,4 +186,41 @@ on meta_ads_insights (campaign_id, date_start desc);
 create index if not exists idx_meta_ads_insights_date
 on meta_ads_insights (date_start desc);
 
+-- Mismas métricas que meta_ads_insights pero pedidas con breakdowns=region
+-- a la API — tabla separada (no una columna region en meta_ads_insights)
+-- para no tocar la llave primaria (ad_id, date_start) de la que dependen
+-- marketing_costs / v_meta_ads_analytics. Una fila por anuncio × día × región.
+create table if not exists meta_ads_insights_region (
+    ad_id text not null,
+    date_start date not null,
+    region text not null,
+    date_stop date,
+    ad_account_id text,
+    campaign_id text,
+    adset_id text,
+    impressions bigint,
+    clicks bigint,
+    reach bigint,
+    spend numeric,
+    frequency numeric,
+    cpm numeric,
+    cpc numeric,
+    ctr numeric,
+    cpp numeric,
+    actions jsonb,
+    cost_per_action_type jsonb,
+    raw jsonb,
+    fetched_at timestamptz not null default now(),
+    primary key (ad_id, date_start, region)
+);
+
+create index if not exists idx_meta_ads_insights_region_date
+on meta_ads_insights_region (date_start desc);
+
+create index if not exists idx_meta_ads_insights_region_campaign_date
+on meta_ads_insights_region (campaign_id, date_start desc);
+
+create index if not exists idx_meta_ads_insights_region_region
+on meta_ads_insights_region (region, date_start desc);
+
 

@@ -142,6 +142,49 @@ def _ensure_schema_once() -> None:
         alter table if exists meta_ads_insights
         add column if not exists reserva_app_3 numeric;
         """,
+        # meta_ads_insights_region: mismas métricas que meta_ads_insights pero
+        # pedidas con breakdowns=region a la API — tabla separada (no una
+        # columna region en meta_ads_insights) a propósito, para no tocar la
+        # llave primaria (ad_id, date_start) de la que dependen
+        # marketing_costs / v_meta_ads_analytics / reserva_app_3 backfill.
+        # Una fila por anuncio × día × región.
+        """
+        create table if not exists meta_ads_insights_region (
+            ad_id text not null,
+            date_start date not null,
+            region text not null,
+            date_stop date,
+            ad_account_id text,
+            campaign_id text,
+            adset_id text,
+            impressions bigint,
+            clicks bigint,
+            reach bigint,
+            spend numeric,
+            frequency numeric,
+            cpm numeric,
+            cpc numeric,
+            ctr numeric,
+            cpp numeric,
+            actions jsonb,
+            cost_per_action_type jsonb,
+            raw jsonb,
+            fetched_at timestamptz not null default now(),
+            primary key (ad_id, date_start, region)
+        );
+        """,
+        """
+        create index if not exists idx_meta_ads_insights_region_date
+        on meta_ads_insights_region (date_start desc);
+        """,
+        """
+        create index if not exists idx_meta_ads_insights_region_campaign_date
+        on meta_ads_insights_region (campaign_id, date_start desc);
+        """,
+        """
+        create index if not exists idx_meta_ads_insights_region_region
+        on meta_ads_insights_region (region, date_start desc);
+        """,
         # meta_custom_conversions: catálogo de conversiones personalizadas de la cuenta
         """
         create table if not exists meta_custom_conversions (
@@ -226,6 +269,7 @@ def _ensure_schema_once() -> None:
         conn.commit()
 
     _ensure_meta_analytics_view()
+    _ensure_meta_ads_region_view()
     _ensure_marketing_costs_daily_view()
     _ensure_google_ads_schema()
 
@@ -353,6 +397,29 @@ def _ensure_meta_analytics_view() -> None:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("DROP VIEW IF EXISTS v_meta_ads_analytics CASCADE")
+            for stmt in stmts:
+                cur.execute(stmt)
+        conn.commit()
+
+
+def _ensure_meta_ads_region_view() -> None:
+    """Vista v_meta_ads_analytics desglosada por región (sql/v_meta_ads_by_region.sql).
+    Depende de meta_fn_action_type_sum, creada por _ensure_meta_analytics_view()
+    — debe correr después de esa (ver orden en _ensure_schema_once)."""
+    path = Path(__file__).resolve().parent.parent / "sql" / "v_meta_ads_by_region.sql"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    text = "\n".join(
+        line for line in text.splitlines() if not line.strip().startswith("--")
+    )
+    parts = re.split(r"(?=\n(?:CREATE OR REPLACE|COMMENT ON))", "\n" + text.strip())
+    stmts = [p.strip() for p in parts if p.strip()]
+    if not stmts:
+        return
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DROP VIEW IF EXISTS v_meta_ads_by_region CASCADE")
             for stmt in stmts:
                 cur.execute(stmt)
         conn.commit()

@@ -775,16 +775,24 @@ def run() -> int:
             # la de arriba en una sola petición porque cambia la forma de
             # cada fila (una por anuncio × día × región en vez de una por
             # anuncio × día), y meta_ads_insights depende de esa unicidad.
-            time.sleep(0.4)
-            print(f"[meta_ads] Fetching insights BY REGION level={level} ({label})...")
-            region_params = {**insight_params, "breakdowns": "region"}
-            raw_region = client.paged(
-                f"{acct_path}/insights", region_params, page_limit=insights_page_limit
-            )
-            for x in raw_region:
-                row = _row_insight(account_id, x, level, with_region=True)
-                if row:
-                    insight_region_rows.append(row)
+            # try/except propio: un error acá (ej. "reduce the amount of
+            # data" — breakdowns=region multiplica las filas por ventana, el
+            # mismo tipo de error que el chunking de arriba existe para
+            # evitar) no debe tirar abajo el sync principal, que ya
+            # funcionaba antes de que existiera este bloque.
+            try:
+                time.sleep(0.4)
+                print(f"[meta_ads] Fetching insights BY REGION level={level} ({label})...")
+                region_params = {**insight_params, "breakdowns": "region"}
+                raw_region = client.paged(
+                    f"{acct_path}/insights", region_params, page_limit=insights_page_limit
+                )
+                for x in raw_region:
+                    row = _row_insight(account_id, x, level, with_region=True)
+                    if row:
+                        insight_region_rows.append(row)
+            except Exception as exc:
+                print(f"[meta_ads] insights BY REGION ({label}): error ({exc}) — omitiendo esta ventana")
 
     upsert_many(
         "meta_ads_insights",

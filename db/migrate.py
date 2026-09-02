@@ -239,8 +239,16 @@ def _ensure_schema_once() -> None:
             categor_a_1   text,
             categor_a_2   text,
             observaciones text,
-            origen        text
+            origen        text,
+            check_operacion_hotboat text
         );
+        """,
+        # Columna "Check operación HotBoat" del sheet, agregada 2026-09 — deploys
+        # anteriores ya tienen la tabla creada sin esta columna, el CREATE TABLE
+        # IF NOT EXISTS de arriba no la agrega retroactivamente.
+        """
+        alter table if exists flujo_caja_actual
+        add column if not exists check_operacion_hotboat text;
         """,
         # Migrar columnas si ya existían como text (deploy anterior)
         """

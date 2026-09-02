@@ -23,7 +23,12 @@ from db.connection import get_connection
 SHEET_NAME_DEFAULT = "consolidad flujo caja"
 
 ACTUAL_COLUMNS = ["fecha", "descripci_n", "cargos", "abonos", "saldo",
-                  "categor_a_1", "categor_a_2", "observaciones", "origen"]
+                  "categor_a_1", "categor_a_2", "observaciones", "origen",
+                  "check_operacion_hotboat"]
+
+# Header del sheet "Check operación HotBoat" normalizado por _normalize_col()
+# (espacio y 'ó' se colapsan a '_'): "check_operaci_n_hotboat".
+CHECK_COL_KEY = "check_operaci_n_hotboat"
 
 
 def _normalize_col(header: str) -> str:
@@ -77,6 +82,27 @@ def _parse_numeric(value: Any) -> Optional[Decimal]:
         return Decimal(text)
     except InvalidOperation:
         return None
+
+
+def _parse_check(value: Any) -> Optional[str]:
+    """Normaliza la columna 'Check operación HotBoat' (SI/NO) a mayúscula sin espacios."""
+    if value is None:
+        return None
+    text = str(value).strip().upper()
+    return text or None
+
+
+def _find_check_value(col_map: Dict[str, Any]) -> Any:
+    """Busca la columna 'check' en col_map. Primero por la clave normalizada
+    esperada (CHECK_COL_KEY); si el header del sheet cambió levemente (tilde,
+    orden de palabras, etc.) hace fallback a cualquier clave que empiece con
+    'check', para no perder el dato silenciosamente."""
+    if CHECK_COL_KEY in col_map:
+        return col_map[CHECK_COL_KEY]
+    for key, value in col_map.items():
+        if key.startswith("check"):
+            return value
+    return None
 
 
 def _get_gspread_client():
@@ -172,6 +198,7 @@ def run() -> int:
             "categor_a_2":   col_map.get("categor_a_2") or None,
             "observaciones": col_map.get("observaciones") or None,
             "origen":        col_map.get("origen") or None,
+            "check_operacion_hotboat": _parse_check(_find_check_value(col_map)),
         })
 
     with get_connection() as conn:
@@ -197,11 +224,12 @@ def run() -> int:
                     """
                     INSERT INTO flujo_caja_actual
                         (id, fila, fecha, descripci_n, cargos, abonos, saldo,
-                         categor_a_1, categor_a_2, observaciones, origen)
+                         categor_a_1, categor_a_2, observaciones, origen,
+                         check_operacion_hotboat)
                     VALUES
                         (%(id)s, %(fila)s, %(fecha)s, %(descripci_n)s, %(cargos)s,
                          %(abonos)s, %(saldo)s, %(categor_a_1)s, %(categor_a_2)s,
-                         %(observaciones)s, %(origen)s)
+                         %(observaciones)s, %(origen)s, %(check_operacion_hotboat)s)
                     ON CONFLICT (id) DO UPDATE
                         SET fila          = EXCLUDED.fila,
                             fecha         = EXCLUDED.fecha,
@@ -213,6 +241,7 @@ def run() -> int:
                             categor_a_2   = EXCLUDED.categor_a_2,
                             observaciones = EXCLUDED.observaciones,
                             origen        = EXCLUDED.origen,
+                            check_operacion_hotboat = EXCLUDED.check_operacion_hotboat,
                             synced_at     = now()
                     """,
                     actual_rows,

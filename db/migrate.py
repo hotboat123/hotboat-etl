@@ -280,6 +280,43 @@ def _ensure_schema_once() -> None:
     _ensure_meta_ads_region_view()
     _ensure_marketing_costs_daily_view()
     _ensure_google_ads_schema()
+    _ensure_mercadopago_schema()
+
+
+def _ensure_mercadopago_schema() -> None:
+    """Crea la tabla de pagos de MercadoPago (cobros con comisión y neto recibido)."""
+    statements = [
+        """
+        create table if not exists mercadopago_pagos (
+            id                 bigint primary key,
+            fecha              date        not null,
+            hora               time,
+            date_approved      timestamptz,
+            status             text,
+            status_detail      text,
+            origen             text,
+            payment_type_id    text,
+            payment_method_id  text,
+            installments       integer,
+            monto              numeric,
+            comision           numeric,
+            neto_recibido      numeric,
+            monto_reembolsado  numeric default 0,
+            descripcion        text,
+            referencia_externa text,
+            fecha_liberacion   timestamptz,
+            fetched_at         timestamptz not null default now()
+        );
+        """,
+        """
+        create index if not exists idx_mp_pagos_fecha on mercadopago_pagos (fecha desc);
+        """,
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+        conn.commit()
 
 
 def _ensure_google_ads_schema() -> None:

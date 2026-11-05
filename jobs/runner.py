@@ -68,6 +68,14 @@ except Exception as e:
     GOOGLE_ADS_ENABLED = False
     print(f"[runner] Google Ads module not available: {e}")
 
+try:
+    from jobs.job_mercadopago import run as run_mercadopago
+    MERCADOPAGO_ENABLED = bool(os.getenv("MERCADOPAGO_ACCESS_TOKEN"))
+except Exception as e:
+    run_mercadopago = None  # type: ignore[assignment]
+    MERCADOPAGO_ENABLED = False
+    print(f"[runner] MercadoPago module not available: {e}")
+
 
 def load_env() -> None:
     """Load environment variables"""
@@ -129,6 +137,7 @@ def main() -> None:
     META_ADS_INTERVAL       = int(os.getenv("META_ADS_INTERVAL", "3600"))        # 1 h
     FLUJO_CAJA_INTERVAL     = int(os.getenv("FLUJO_CAJA_INTERVAL", "1800"))      # 30 min
     GOOGLE_ADS_INTERVAL     = int(os.getenv("GOOGLE_ADS_INTERVAL", "3600"))       # 1 h
+    MERCADOPAGO_INTERVAL    = int(os.getenv("MERCADOPAGO_INTERVAL", "3600"))      # 1 h
 
     print("Configuracion:")
     if meta_ads_enabled:
@@ -143,6 +152,10 @@ def main() -> None:
         print(f"   - Google Ads: cada {GOOGLE_ADS_INTERVAL//60} minutos")
     else:
         print("   - Google Ads: DESHABILITADO (falta GOOGLE_ADS_DEVELOPER_TOKEN / GOOGLE_ADS_CUSTOMER_ID)")
+    if MERCADOPAGO_ENABLED:
+        print(f"   - MercadoPago: cada {MERCADOPAGO_INTERVAL//60} minutos")
+    else:
+        print("   - MercadoPago: DESHABILITADO (falta MERCADOPAGO_ACCESS_TOKEN)")
     print()
 
     # --- Ejecución inicial ---
@@ -158,6 +171,11 @@ def main() -> None:
         print("Ejecucion inicial de Google Ads...")
         run_job_safely("google_ads_sync", run_google_ads)
 
+    if MERCADOPAGO_ENABLED and run_mercadopago is not None:
+        print("Ejecucion inicial de MercadoPago...")
+        run_job_safely("mercadopago_sync", run_mercadopago)
+
+    last_mercadopago_run = time.time()
     last_meta_ads_run = time.time()
     last_flujo_caja_run = time.time()
     last_google_ads_run = time.time()
@@ -189,6 +207,11 @@ def main() -> None:
             if GOOGLE_ADS_ENABLED and run_google_ads is not None and current_time - last_google_ads_run >= GOOGLE_ADS_INTERVAL:
                 run_job_safely("google_ads_sync", run_google_ads)
                 last_google_ads_run = current_time
+
+            # MercadoPago
+            if MERCADOPAGO_ENABLED and run_mercadopago is not None and current_time - last_mercadopago_run >= MERCADOPAGO_INTERVAL:
+                run_job_safely("mercadopago_sync", run_mercadopago)
+                last_mercadopago_run = current_time
 
             time_to_next = META_ADS_INTERVAL - (current_time - last_meta_ads_run)
             next_run = dt.datetime.now() + dt.timedelta(seconds=max(time_to_next, 0))

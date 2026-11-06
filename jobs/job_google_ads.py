@@ -13,7 +13,7 @@ Variables requeridas:
 
 Variables opcionales:
   GOOGLE_ADS_LOGIN_CUSTOMER_ID  ID de cuenta manager/MCC (si aplica)
-  GOOGLE_ADS_API_VERSION        Default v17. Cambia si la versión está deprecada.
+  GOOGLE_ADS_API_VERSION        Default v24. Google deprecó v17–v22; cambia si la versión queda deprecada.
   GOOGLE_ADS_DATE_PRESET        last_30d | last_90d | last_year | maximum. Default: last_30d
   GOOGLE_ADS_TIME_RANGE_SINCE   YYYY-MM-DD  ─┐ Para backfill histórico.
   GOOGLE_ADS_TIME_RANGE_UNTIL   YYYY-MM-DD  ─┘ Úsalos juntos, luego bórralos.
@@ -384,7 +384,7 @@ def run() -> int:
 
     customer_id = required["GOOGLE_ADS_CUSTOMER_ID"].replace("-", "")
     login_id = (_env("GOOGLE_ADS_LOGIN_CUSTOMER_ID") or customer_id).replace("-", "")
-    api_version = _env("GOOGLE_ADS_API_VERSION", "v17") or "v17"
+    api_version = _env("GOOGLE_ADS_API_VERSION", "v24") or "v24"
     chunk_days = max(1, int(_env("GOOGLE_ADS_CHUNK_DAYS", "90") or "90"))
     today = dt.date.today()
 

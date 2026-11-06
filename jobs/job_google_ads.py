@@ -152,7 +152,8 @@ class GoogleAdsClient:
         page_token: Optional[str] = None
 
         while True:
-            body: Dict[str, Any] = {"query": query, "pageSize": 10000}
+            # Desde v17 la API no admite pageSize: el tamaño de página es fijo (10.000).
+            body: Dict[str, Any] = {"query": query}
             if page_token:
                 body["pageToken"] = page_token
 

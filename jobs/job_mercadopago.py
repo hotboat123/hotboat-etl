@@ -15,6 +15,7 @@ Variables opcionales:
   MERCADOPAGO_INTERVAL           Segundos entre syncs. Default: 3600
 
 Tabla: mercadopago_pagos (upsert por id de pago).
+Tabla: mercadopago_saldo (una foto del saldo de la cuenta en cada sync; solo lectura).
 `fecha` y `hora` están en hora de Chile (America/Santiago).
 """
 from __future__ import annotations
@@ -33,6 +34,8 @@ from db.utils import now_utc, upsert_many
 log = logging.getLogger(__name__)
 
 API_URL = "https://api.mercadopago.com/v1/payments/search"
+USER_URL = "https://api.mercadopago.com/users/me"
+BALANCE_URL = "https://api.mercadopago.com/users/{user_id}/mercadopago_account/balance"
 TZ = ZoneInfo("America/Santiago")
 PAGE = 100
 
@@ -100,11 +103,43 @@ def _map(p: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _sync_saldo(token: str) -> None:
+    """Guarda una foto del saldo de la cuenta (solo lectura). Si falla no corta el sync de pagos."""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        me = requests.get(USER_URL, headers=headers, timeout=30)
+        if me.status_code >= 400:
+            raise RuntimeError(f"HTTP {me.status_code} en /users/me")
+        resp = requests.get(BALANCE_URL.format(user_id=me.json().get("id")), headers=headers, timeout=30)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+        b = resp.json()
+        now = now_utc()
+        upsert_many(
+            "mercadopago_saldo",
+            [{
+                "fetched_at": now,
+                "fecha": now.astimezone(TZ).date(),
+                "disponible": _num(b.get("available_balance")),
+                "no_disponible": _num(b.get("unavailable_balance")),
+                "total": _num(b.get("total_amount")),
+                "moneda": b.get("currency_id"),
+            }],
+            conflict_columns=["fetched_at"],
+            update_columns=["fecha", "disponible", "no_disponible", "total", "moneda"],
+        )
+        log.info("[mercadopago] Saldo disponible: %s", b.get("available_balance"))
+    except Exception as exc:  # noqa: BLE001 - el saldo es opcional; nunca loguear headers/token
+        log.warning("[mercadopago] Saldo no disponible: %s", exc)
+
+
 def run() -> int:
     token = _env("MERCADOPAGO_ACCESS_TOKEN")
     if not token:
         log.info("[mercadopago] Saltando: falta MERCADOPAGO_ACCESS_TOKEN")
         return 0
+
+    _sync_saldo(token)
 
     since_s, until_s = _env("MERCADOPAGO_TIME_RANGE_SINCE"), _env("MERCADOPAGO_TIME_RANGE_UNTIL")
     today = dt.datetime.now(TZ).date()

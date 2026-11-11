@@ -281,6 +281,33 @@ def _ensure_schema_once() -> None:
     _ensure_marketing_costs_daily_view()
     _ensure_google_ads_schema()
     _ensure_mercadopago_schema()
+    _ensure_transbank_schema()
+
+
+def _ensure_transbank_schema() -> None:
+    """Crea la tabla de ventas del portal Transbank (la lee el monitor de cuadratura semanal)."""
+    statements = [
+        """
+        create table if not exists transbank_ventas (
+            id          bigserial primary key,
+            fecha_hora  timestamp   not null,
+            monto       numeric     not null,
+            codigo      text,
+            medio       text,
+            tipo        text        not null default 'venta',
+            fetched_at  timestamptz not null default now(),
+            unique (fecha_hora, codigo, tipo)
+        );
+        """,
+        """
+        create index if not exists idx_tbk_ventas_fecha on transbank_ventas (fecha_hora desc);
+        """,
+    ]
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+        conn.commit()
 
 
 def _ensure_mercadopago_schema() -> None:

@@ -311,16 +311,6 @@ def _ensure_mercadopago_schema() -> None:
         """
         create index if not exists idx_mp_pagos_fecha on mercadopago_pagos (fecha desc);
         """,
-        """
-        create table if not exists mercadopago_saldo (
-            fetched_at     timestamptz primary key,
-            fecha          date not null,
-            disponible     numeric,
-            no_disponible  numeric,
-            total          numeric,
-            moneda         text
-        );
-        """,
     ]
     with get_connection() as conn:
         with conn.cursor() as cur:
